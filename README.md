@@ -1,3 +1,6 @@
+## Patches in this branch:
+* (/mesh_transformer/sampling.py) `nucleaus_filter` now subtracts infinity from logits to be removed instead of 1e10.
+
 # Mesh Transformer JAX
 
 A haiku library using the `xmap`/`pjit` operators in JAX for model parallelism of transformers.

@@ -21,9 +21,7 @@ def nucleaus_filter(logits, top_p=0.9, top_k=None):
 
         _, indices_to_remove = jax.lax.sort_key_val(sorted_indices, sorted_indices_to_remove)
 
-        logit_mask = 1e10 * indices_to_remove
-
-        logits -= logit_mask
+        logits = jnp.where(indices_to_remove, -jnp.inf, logits)
 
     # Remove tokens with cumulative probability above a threshold
     sorted_indices_to_remove = cumulative_probs > top_p
@@ -31,9 +29,7 @@ def nucleaus_filter(logits, top_p=0.9, top_k=None):
 
     _, indices_to_remove = jax.lax.sort_key_val(sorted_indices, sorted_indices_to_remove)
 
-    logit_mask = 1e10 * indices_to_remove
-
-    logits -= logit_mask
+    logits = jnp.where(indices_to_remove, -jnp.inf, logits)
 
     return logits
 

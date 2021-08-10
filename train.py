@@ -123,6 +123,8 @@ if __name__ == "__main__":
 
     eval_task_dict = tasks.get_task_dict(eval_tasks)
 
+    pbar = tqdm(initial=step, total=total_steps, desc="Training progress")
+
     while True:
         loss, last_loss = t.train(train_dataset.get_samples())
         wandb.log({'train/loss': loss, 'train/last_loss': last_loss}, step)
@@ -136,9 +138,6 @@ if __name__ == "__main__":
             if step == total_steps:
                 print("training completed!")
                 exit()
-
-        if step % 100 == 0:
-            print(f"step {step} done")
 
         if step % val_every == 0:
             for name, val_set in val_sets.items():
@@ -165,3 +164,4 @@ if __name__ == "__main__":
             print(f"step {step} val results: {dumped}")
             wandb.log(flat_results, step)
         step += 1
+        pbar.update()

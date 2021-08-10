@@ -1,4 +1,5 @@
 ## Patches in this branch:
+* (/mesh_transformer/checkpoint.py) An experimental version of `read_ckpt`.
 * (/mesh_transformer/sampling.py) `nucleaus_filter` now subtracts infinity from logits to be removed instead of 1e10.
 
 # Mesh Transformer JAX

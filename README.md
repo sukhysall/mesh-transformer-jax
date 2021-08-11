@@ -1,6 +1,6 @@
 ## Patches in this branch:
-* (/requirements.txt) Changed to specifically require JAX 0.2.12
-* (/mesh_transformer/sampling.py) `nucleaus_filter` now subtracts infinity from logits to be removed instead of 1e10.
+* __(/requirements.txt)__ Changed to specifically require JAX 0.2.12
+* __(/mesh_transformer/sampling.py)__ `nucleaus_filter` now subtracts infinity from logits to be removed instead of 1e10.
 
 # Mesh Transformer JAX
 

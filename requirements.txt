@@ -4,5 +4,6 @@ einops
 requests
 optax
 dm-haiku
+ray[default]
 jax==0.2.12
 progressbar2

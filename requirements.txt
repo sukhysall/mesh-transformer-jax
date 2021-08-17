@@ -1,7 +1,6 @@
 numpy
 transformers
 tqdm
-einops
 requests
 optax
 dm-haiku

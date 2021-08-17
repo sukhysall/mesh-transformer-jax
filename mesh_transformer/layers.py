@@ -2,7 +2,6 @@ import haiku as hk
 import jax
 import jax.numpy as jnp
 import numpy as np
-from einops import rearrange, repeat
 
 from mesh_transformer.util import f_psum, g_psum, maybe_shard, head_print
 from jax.experimental import PartitionSpec as P
@@ -140,11 +139,11 @@ def rotate_every_two(x):
 
     x = jnp.stack((-x2, x1), axis=-1)
 
-    return rearrange(x, '... d j -> ... (d j)')
+    return x.reshape(*x.shape[:-2], -1)
 
 
 def apply_rotary_pos_emb(x, sincos):
-    sin, cos = map(lambda t: repeat(t, 'b n -> b (n j)', j=2)[-x.shape[0]:, None, :], sincos)
+    sin, cos = map(lambda t: t.repeat(2, axis=-1)[-x.shape[0]:, None, :], sincos)
     return (x * cos) + (rotate_every_two(x) * sin)
 
 
@@ -154,11 +153,11 @@ def rotate_every_two_v2(x):
 
     x = jnp.stack((-x2, x1), axis=-1)
 
-    return rearrange(x, '... d j -> ... (d j)')
+    return x.reshape(*x.shape[:-2], -1)
 
 
 def apply_rotary_pos_emb_v2(x, sincos):
-    sin, cos = map(lambda t: repeat(t, '... b n -> ... b (n j)', j=2)[-x.shape[-3]:, None, :], sincos)
+    sin, cos = map(lambda t: t.repeat(2, axis=-1)[-x.shape[-3]:, None, :], sincos)
     return (x * cos) + (rotate_every_two_v2(x) * sin)
 
 

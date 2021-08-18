@@ -1,9 +1,9 @@
 numpy
-transformers
 tqdm
 requests
 optax
 dm-haiku
 ray[default]
 jax==0.2.12
+transformers
 progressbar2

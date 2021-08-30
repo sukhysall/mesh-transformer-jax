@@ -5,7 +5,7 @@
     * `local_attention_radius`: A positive integer that specifies the radius for layers with local attention. Has no effect if all of your layers are global attention layers. Defaults to 256.
     * `tie_word_embeddings`: A Boolean value that, if true, will cause the input embedding weights to be copied into the output embedding weights, overwriting them, after the weights are initialized. If `compat` is set to `"neo"`, this defaults to `True`, otherwise `False`.
 
-    This config will allow you to load GPT-Neo-2.7B with 5 cores per replica if you manage to convert it into a JAX checkpoint first (you will have to pad the input and output embedding weights to 50400; in the Hugging Face transformers library the input embedding weights are called `transformer.wte.weight`, and the output embedding weights are called `lm_head.weight`):
+    This config will allow you to load GPT-Neo-2.7B with 4 cores per replica if you manage to convert it into a JAX checkpoint first (you will have to pad the input and output embedding weights to 50400; in the Hugging Face transformers library the input embedding weights are called `transformer.wte.weight`, and the output embedding weights are called `lm_head.weight`):
     ```python
     params = {
         "compat": "neo",
@@ -16,7 +16,7 @@
         "norm": "layernorm",
         "pe": "fixed",
         "seq": 2048,
-        "cores_per_replica": 5,
+        "cores_per_replica": 4,
     }
     ```
 * __(/mesh_transformer/layers.py)__ All einops calls have been replaced with equivalent JAX calls, removing the need for the Python package einops.

@@ -1,4 +1,24 @@
 ## Patches in this branch:
+* __(/mesh_transformer/layers.py and /mesh_transformer/transformer_shard.py)__ Added some optional GPT-Neo compatibility config options to the v1 transformer:
+    * `compat`: A string that can be set to `"j"` or `"neo"`. Setting this to `"neo"` changes the architecture of the transformer network slightly to better conform to that of the GPT-Neo models. Defaults to `"j"`.
+    * `attention_layers`: A list with `layers` strings inside of it, each of which is either `"global"` or `"local"`, specifying whether each layer should use global or local attention. If `compat` is set to `"neo"`, this defaults to a list with alternating `"global"` and `"local"`, otherwise defaults to all `"global"`.
+    * `local_attention_radius`: A positive integer that specifies the radius for layers with local attention. Has no effect if all of your layers are global attention layers. Defaults to 256.
+    * `tie_word_embeddings`: A Boolean value that, if true, will cause the input embedding weights to be copied into the output embedding weights, overwriting them, after the weights are initialized. If `compat` is set to `"neo"`, this defaults to `True`, otherwise `False`.
+
+    This config will allow you to load GPT-Neo-2.7B with 5 cores per replica if you manage to convert it into a JAX checkpoint first (you will have to pad the input and output embedding weights to 50400; in the Hugging Face transformers library the input embedding weights are called `transformer.wte.weight`, and the output embedding weights are called `lm_head.weight`):
+    ```python
+    params = {
+        "compat": "neo",
+        "layers": 32,
+        "d_model": 2560,
+        "n_heads": 20,
+        "n_vocab": 50400,
+        "norm": "layernorm",
+        "pe": "fixed",
+        "seq": 2048,
+        "cores_per_replica": 5,
+    }
+    ```
 * __(/mesh_transformer/layers.py)__ All einops calls have been replaced with equivalent JAX calls, removing the need for the Python package einops.
 * __(/requirements.txt)__ No longer requires einops.
 * __(/requirements.txt)__ Changed to specifically require JAX 0.2.12

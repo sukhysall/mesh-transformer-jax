@@ -167,6 +167,7 @@ class EmbeddingShard(hk.Module):
         in_dim = config["n_vocab"]
         out_dim = config["d_model"]
         shards = config["cores_per_replica"]
+        self.compat = config.get("compat", "j")
 
         assert in_dim % shards == 0
 
@@ -226,16 +227,20 @@ class EmbeddingShardV2(hk.Module):
 
 # We actually combine the FF and dense in one layer (i.e. compute in parallel) to minimize all reduces
 class TransformerLayerShard(hk.Module):
-    def __init__(self, config, name=None, init_scale=1.):
+    def __init__(self, config, name=None, init_scale=1., attention_type="global"):
         super().__init__(name=name)
         heads = config["n_heads"]
         dim = config["d_model"]
         shards = config["cores_per_replica"]
         norm = getnorm(config["norm"])
         self.is_rotary = config["pe"] == "rotary"
+        self.attention_type = attention_type
+        self.local_attention_radius = config.get("local_attention_radius", 256)
+        self.compat = config.get("compat", "j")
 
         assert dim % heads == 0
         assert heads % shards == 0
+        assert attention_type in ("global", "local")
 
         self.dim = dim
         self.dim_per_head = dim // heads
@@ -244,12 +249,14 @@ class TransformerLayerShard(hk.Module):
         self.pe_rotary_dims = config.get("pe_rotary_dims", self.dim_per_head)
 
         self.norm = norm
+        if self.compat == "neo":
+            self.norm_2 = getnorm(config["norm"])
 
         self.q = hk.Linear(self.dim_per_shard, with_bias=False)
         self.v = hk.Linear(self.dim_per_shard, with_bias=False)
         self.k = hk.Linear(self.dim_per_shard, with_bias=False)
 
-        self.o = hk.Linear(self.dim, with_bias=False,
+        self.o = hk.Linear(self.dim, with_bias=self.compat == "neo",
                            w_init=hk.initializers.TruncatedNormal(stddev=init_scale / np.sqrt(self.dim)))
 
         self.dense_proj = hk.Linear(self.dim_per_shard * 4)
@@ -273,8 +280,9 @@ class TransformerLayerShard(hk.Module):
 
         attention_logits = jnp.einsum("thd,Thd->htT", q, k)
 
-        sqrt_key_size = np.sqrt(self.dim_per_head).astype(k.dtype)
-        attention_logits = attention_logits / sqrt_key_size
+        if self.compat != "neo":
+            sqrt_key_size = np.sqrt(self.dim_per_head).astype(k.dtype)
+            attention_logits = attention_logits / sqrt_key_size
 
         attention_logits += attn_bias
 
@@ -295,6 +303,11 @@ class TransformerLayerShard(hk.Module):
 
         return q, v, k
 
+    def neo_ff(self, x):
+        x = self.norm_2(x)
+        dense_out = self.ff(x)
+        return dense_out
+
     def __call__(self, x, attn_bias):
         x = f_psum(x)
         x = self.norm(x)
@@ -303,13 +316,20 @@ class TransformerLayerShard(hk.Module):
 
         seq_len = x.shape[0]
         causal_mask = np.tril(np.ones((seq_len, seq_len)))
+        if self.attention_type == "local":
+            causal_mask -= np.tril(causal_mask, -self.local_attention_radius)
+
         bias = -1e10 * (1. - causal_mask)
         bias += attn_bias
 
         attn_out = self.self_attn(q, v, k, bias)
-        dense_out = self.ff(x)
+        if self.compat == "neo":
+            out = attn_out
+        else:
+            dense_out = self.ff(x)
+            out = attn_out + dense_out
 
-        return g_psum(attn_out + dense_out)
+        return g_psum(out)
 
     # iterate the decoding process by a single token
     def decode_once(self, decode_state, x, attn_bias):
@@ -330,13 +350,20 @@ class TransformerLayerShard(hk.Module):
         masked_tokens = length - tokens_decoded
 
         attention_mask = jnp.arange(0, length) < masked_tokens
+        if self.attention_type == "local":
+            attention_mask = jnp.logical_and(attention_mask, jnp.arange(0, length) >= masked_tokens - self.local_attention_radius)
+
         bias = (-1e10 * attention_mask)
         bias += attn_bias
 
         attn_out = self.self_attn(q, v, k, bias)
-        dense_out = self.ff(x)
+        if self.compat == "neo":
+            out = attn_out
+        else:
+            dense_out = self.ff(x)
+            out = attn_out + dense_out
 
-        return g_psum(attn_out + dense_out), {
+        return g_psum(out), {
             "tokens_decoded": tokens_decoded,
             "k": k,
             "v": v
@@ -354,15 +381,21 @@ class TransformerLayerShard(hk.Module):
 
         seq_len = x.shape[0]
         causal_mask = np.tril(np.ones((seq_len, seq_len)))
+        if self.attention_type == "local":
+            causal_mask -= np.tril(causal_mask, -self.local_attention_radius)
 
         bias = -1e10 * (1. - causal_mask)  # regular AR masking
         bias -= 1e10 * (jnp.arange(0, full_length) < masked_tokens)  # mask out zero tokens before context starts
         bias += attn_bias  # finally add attn bias for rpe
 
         attn_out = self.self_attn(q, v, k, bias)
-        dense_out = self.ff(x)
+        if self.compat == "neo":
+            out = attn_out
+        else:
+            dense_out = self.ff(x)
+            out = attn_out + dense_out
 
-        return g_psum(attn_out + dense_out), {"k": k, "v": v, "tokens_decoded": given_length.astype(jnp.uint32)}
+        return g_psum(out), {"k": k, "v": v, "tokens_decoded": given_length.astype(jnp.uint32)}
 
 
 # This new class combines the input and output projection into one matmul for better efficiency
@@ -547,6 +580,7 @@ class ProjectionShard(hk.Module):
         out_dim = config["n_vocab"]
         shards = config["cores_per_replica"]
         norm = getnorm(config["norm"])
+        self.compat = config.get("compat", "j")
 
         assert out_dim % shards == 0
 
@@ -555,7 +589,7 @@ class ProjectionShard(hk.Module):
 
         self.norm = norm
 
-        self.proj = hk.Linear(self.dim_per_shard)
+        self.proj = hk.Linear(self.dim_per_shard, with_bias=self.compat != "neo")
 
     def __call__(self, x):
         x = self.norm(x)

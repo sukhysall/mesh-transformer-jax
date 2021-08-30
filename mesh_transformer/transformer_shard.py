@@ -24,6 +24,8 @@ class CausalTransformerShard(hk.Module):
         heads = config["n_heads"]
         shards = config["cores_per_replica"]
         layer_count = config["layers"]
+        self.compat = config.get("compat", "j")
+        self.tie_word_embeddings = config.get("tie_word_embeddings", self.compat == "neo")
 
         self.transformer_layers = []
         self.heads = heads
@@ -34,8 +36,9 @@ class CausalTransformerShard(hk.Module):
 
         init_scale = 2. / layer_count
 
+        attention_layers = config.get("attention_layers", ["global" if self.compat != "neo" or i % 2 == 0 else "local" for i in range(config["layers"])])
         for i in range(layer_count):
-            self.transformer_layers.append(TransformerLayerShard(config, name=f"layer_{i}", init_scale=init_scale))
+            self.transformer_layers.append(TransformerLayerShard(config, name=f"layer_{i}", init_scale=init_scale, attention_type=attention_layers[i]))
 
         self.proj = ProjectionShard(config)
 
@@ -58,6 +61,8 @@ class CausalTransformerShard(hk.Module):
 
         for l in self.transformer_layers:
             x = x + hk.remat(l)(x, attn_bias)
+            if l.compat == "neo":
+                x = x + l.neo_ff(x)
 
         return hk.remat(self.proj.loss)(x, target, z_loss)
 
@@ -90,6 +95,8 @@ class CausalTransformerShard(hk.Module):
         for l in self.transformer_layers:
             res, layer_state = l.get_init_decode_state(x, length - 1, attn_bias)
             x = x + res
+            if l.compat == "neo":
+                x = x + l.neo_ff(x)
             states.append(layer_state)
 
         return self.proj(x), (last.astype(jnp.uint32), states, hk.next_rng_key())
@@ -110,8 +117,12 @@ class CausalTransformerShard(hk.Module):
         for l, s in zip(self.transformer_layers, state):
             res, layer_state = l.decode_once(s, x, attn_bias)
             x = x + res
+            if l.compat == "neo":
+                x = x + l.neo_ff(x)
             new_states.append(layer_state)
 
+        if self.tie_word_embeddings:
+            self.proj.proj = self.embed.proj
         return self.proj(x), new_states
 
 

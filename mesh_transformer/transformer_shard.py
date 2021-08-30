@@ -57,7 +57,7 @@ class CausalTransformerShard(hk.Module):
 
         attn_bias += mask
 
-        x = hk.remat(self.embed)(context)
+        x = hk.remat(self.embed)(context, pe_length=input_len)
 
         for l in self.transformer_layers:
             x = x + hk.remat(l)(x, attn_bias)
@@ -88,7 +88,7 @@ class CausalTransformerShard(hk.Module):
         else:
             attn_bias = 0
 
-        x = self.embed(context)
+        x = self.embed(context, pe_length=length - 1)
 
         states = []
 
@@ -110,7 +110,7 @@ class CausalTransformerShard(hk.Module):
         else:
             attn_bias = 0
 
-        x = self.embed(new_tok)
+        x = self.embed(new_tok, pe_length=state[0]["tokens_decoded"] + 1)
 
         new_states = []
 

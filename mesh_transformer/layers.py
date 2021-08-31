@@ -197,6 +197,7 @@ class EmbeddingShard(hk.Module):
 
             all_pos_embed = hk.Flatten()(jnp.transpose(all_pos_embed, (1, 0, 2)))
 
+            pe_length = jnp.int32(pe_length)
             pos_embed = jnp.roll(all_pos_embed, -pe_length, axis=0)[-proj_out.shape[0]:]
             proj_out += pos_embed
 

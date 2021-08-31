@@ -121,8 +121,6 @@ class CausalTransformerShard(hk.Module):
                 x = x + l.neo_ff(x)
             new_states.append(layer_state)
 
-        if self.tie_word_embeddings:
-            self.proj.proj = self.embed.proj
         return self.proj(x), new_states
 
 

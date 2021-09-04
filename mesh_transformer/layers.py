@@ -349,12 +349,12 @@ class TransformerLayerShard(hk.Module):
         tokens_decoded = decode_state["tokens_decoded"] + 1
         length = v.shape[0]
 
-        masked_tokens = length - tokens_decoded
+        if self.attention_type == "local":
+            masked_tokens = length - jnp.minimum(tokens_decoded, self.local_attention_radius)
+        else:
+            masked_tokens = length - tokens_decoded
 
         attention_mask = jnp.arange(0, length) < masked_tokens
-        if self.attention_type == "local":
-            attention_mask = jnp.logical_and(attention_mask, jnp.arange(0, length) >= masked_tokens - self.local_attention_radius)
-
         bias = (-1e10 * attention_mask)
         bias += attn_bias
 

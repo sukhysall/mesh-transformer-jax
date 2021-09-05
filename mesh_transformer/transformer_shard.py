@@ -25,7 +25,6 @@ class CausalTransformerShard(hk.Module):
         shards = config["cores_per_replica"]
         layer_count = config["layers"]
         self.compat = config.get("compat", "j")
-        self.tie_word_embeddings = config.get("tie_word_embeddings", self.compat == "neo")
 
         self.transformer_layers = []
         self.heads = heads

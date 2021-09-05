@@ -62,7 +62,7 @@ class CausalTransformerShard(hk.Module):
         for l in self.transformer_layers:
             x = x + hk.remat(l)(x, attn_bias)
             if l.compat == "neo":
-                x = x + l.neo_ff(x)
+                x = x + hk.remat(l.neo_ff)(x)
 
         return hk.remat(self.proj.loss)(x, target, z_loss)
 

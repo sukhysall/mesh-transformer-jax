@@ -308,7 +308,7 @@ class TransformerLayerShard(hk.Module):
     def neo_ff(self, x):
         x = self.norm_2(x)
         dense_out = self.ff(x)
-        return dense_out
+        return g_psum(dense_out)
 
     def __call__(self, x, attn_bias):
         x = f_psum(x)

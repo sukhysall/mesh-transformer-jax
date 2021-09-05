@@ -270,7 +270,7 @@ class CausalTransformer:
         mp_per_host = min(mp, 8)
 
         seq = config["seq"]
-        vocab = config["n_vocab"]
+        vocab = config["n_vocab"] + config.get("n_vocab_padding", 0)
 
         example_shape = (max(dp // jax.host_count(), 1), seq,)
         x = jax.random.uniform(next(key), example_shape, minval=0, maxval=vocab).astype(jnp.uint32)  # batch, len

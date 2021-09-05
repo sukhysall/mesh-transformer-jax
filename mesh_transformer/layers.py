@@ -164,7 +164,7 @@ def apply_rotary_pos_emb_v2(x, sincos):
 class EmbeddingShard(hk.Module):
     def __init__(self, config, name=None):
         super().__init__(name=name)
-        in_dim = config["n_vocab"]
+        in_dim = config["n_vocab"] + config.get("n_vocab_padding", 0)
         out_dim = config["d_model"]
         shards = config["cores_per_replica"]
         self.compat = config.get("compat", "j")
@@ -579,7 +579,8 @@ class TransformerLayerShardV2(hk.Module):
 class ProjectionShard(hk.Module):
     def __init__(self, config, name=None):
         super().__init__(name=name)
-        out_dim = config["n_vocab"]
+        self.out_dim_unpadded = config["n_vocab"]
+        out_dim = self.out_dim_unpadded + config.get("n_vocab_padding", 0)
         shards = config["cores_per_replica"]
         norm = getnorm(config["norm"])
         self.compat = config.get("compat", "j")
@@ -599,7 +600,7 @@ class ProjectionShard(hk.Module):
 
         all_proj = jax.lax.all_gather(proj, 'shard')
 
-        return hk.Flatten()(jnp.transpose(all_proj, (1, 0, 2)))
+        return hk.Flatten()(jnp.transpose(all_proj, (1, 0, 2)))[:, :self.out_dim_unpadded]
 
     def loss(self, x, targets, z_loss=1):
         x = f_psum(x)

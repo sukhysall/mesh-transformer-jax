@@ -237,7 +237,7 @@ class TransformerLayerShard(hk.Module):
         norm = getnorm(config["norm"])
         self.is_rotary = config["pe"] == "rotary"
         self.attention_type = attention_type
-        self.local_attention_radius = config.get("local_attention_radius", 256)
+        self.local_attention_window = config.get("local_attention_window", 256)
         self.compat = config.get("compat", "j")
 
         assert dim % heads == 0
@@ -319,7 +319,7 @@ class TransformerLayerShard(hk.Module):
         seq_len = x.shape[0]
         causal_mask = np.tril(np.ones((seq_len, seq_len)))
         if self.attention_type == "local":
-            causal_mask -= np.tril(causal_mask, -self.local_attention_radius)
+            causal_mask -= np.tril(causal_mask, -self.local_attention_window)
 
         bias = -1e10 * (1. - causal_mask)
         bias += attn_bias
@@ -350,7 +350,7 @@ class TransformerLayerShard(hk.Module):
         length = v.shape[0]
 
         if self.attention_type == "local":
-            masked_tokens = length - jnp.minimum(tokens_decoded, self.local_attention_radius)
+            masked_tokens = length - jnp.minimum(tokens_decoded, self.local_attention_window)
         else:
             masked_tokens = length - tokens_decoded
 
@@ -384,7 +384,7 @@ class TransformerLayerShard(hk.Module):
         seq_len = x.shape[0]
         causal_mask = np.tril(np.ones((seq_len, seq_len)))
         if self.attention_type == "local":
-            causal_mask -= np.tril(causal_mask, -self.local_attention_radius)
+            causal_mask -= np.tril(causal_mask, -self.local_attention_window)
 
         bias = -1e10 * (1. - causal_mask)  # regular AR masking
         bias -= 1e10 * (jnp.arange(0, full_length) < masked_tokens)  # mask out zero tokens before context starts

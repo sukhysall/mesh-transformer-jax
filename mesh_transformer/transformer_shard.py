@@ -56,7 +56,7 @@ class CausalTransformerShard(hk.Module):
 
         attn_bias += mask
 
-        x = hk.remat(self.embed)(context, pe_length=input_len)
+        x = hk.remat(self.embed)(context)
 
         for l in self.transformer_layers:
             x = x + hk.remat(l)(x, attn_bias)

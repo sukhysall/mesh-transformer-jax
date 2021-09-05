@@ -3,7 +3,13 @@ This branch uses less memory to load checkpoints just like the **lowmem** branch
 
 ## Patches in this branch:
 * __(/requirements.txt)__ Removed requirements that aren't needed to use inference and relaxed most of the still-existing requirements. Also now requires progressbar2. Installation takes less time now.
+
+Inherited from **lowmem**:
+
 * __(/mesh_transformer/checkpoint.py)__ You now only need around 4 gibibytes of system RAM, as opposed to originally over 13 gibibytes, to load the slim bfloat16 weights of GPT-J-6B and use them for inference on a TPU instance. This is thanks to a modified version of `read_ckpt` that loads small chunks of the model into the TPU memory at a time instead of loading the entire model into system memory and then moving the entire model into TPU memory. `read_ckpt` now takes much longer, but luckily `move_xmap` (in /mesh_transformer/transformer_shard.py) takes proportionally less time, leading to no noticeable net change in model-loading time.
+
+Inherited from **main**:
+
 * __(/mesh_transformer/layers.py)__ All einops calls have been replaced with equivalent JAX calls, removing the need for the Python package einops.
 * __(/requirements.txt)__ No longer requires einops.
 * __(/requirements.txt)__ Changed to specifically require JAX 0.2.12

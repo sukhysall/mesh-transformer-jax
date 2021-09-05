@@ -16,7 +16,6 @@ Inherited from **modelcompat**:
     * `local_attention_window`: A positive integer that specifies the window size for layers with local attention. Has no effect if all of your layers are global attention layers. Defaults to 256.
     * `n_vocab_padding`: Amount of padding your input and output embeddings have. Defaults to 0.
 * __(/mesh_transformer/layers.py)__ The implementation of standard positional embedding has been changed because the original implementation would've thrown an error. This does not affect GPT-J since it uses rotary positional embedding.
-This branch uses less memory to load checkpoints just like the **lowmem** branch, and additionally takes less time to install (in Google Colaboratory) than the **main** branch.
 
 Inherited from **lowmem-fastinstall**:
 

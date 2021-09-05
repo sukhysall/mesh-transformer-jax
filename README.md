@@ -1,3 +1,7 @@
+# Branch summary
+This branch contains some basic baseline patches that are in all other branches in VE FORBRYDERNE's fork.
+You may be looking for the **all** branch, which contains many extra features.
+
 ## Patches in this branch:
 * __(/mesh_transformer/layers.py)__ All einops calls have been replaced with equivalent JAX calls, removing the need for the Python package einops.
 * __(/requirements.txt)__ No longer requires einops.

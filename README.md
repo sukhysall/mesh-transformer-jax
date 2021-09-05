@@ -9,6 +9,7 @@ This branch contains all of the patches from the following branches:
 
 Inherited from **modelcompat**:
 
+* __(/convert_neo_pytorch_model_to_jax.ipynb)__ Created this notebook, which converts GPT-Neo models from pytorch_model.bin format to a format usable by this branch.
 * __(/mesh_transformer/layers.py and /mesh_transformer/transformer_shard.py)__ Added some optional GPT-Neo compatibility config options to the v1 transformer:
     * `compat`: A string that can be set to `"j"` or `"neo"`. Setting this to `"neo"` changes the architecture of the transformer network slightly to better conform to that of the GPT-Neo models. Defaults to `"j"`.
     * `attention_layers`: A list with `layers` strings inside of it, each of which is either `"global"` or `"local"`, specifying whether each layer should use global or local attention. If `compat` is set to `"neo"`, this defaults to a list with alternating `"global"` and `"local"`, otherwise defaults to all `"global"`.

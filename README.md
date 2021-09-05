@@ -1,23 +1,9 @@
 # Branch summary
-This branch can load GPT-Neo checkpoints and use them for inference. Don't try to train a GPT-Neo model using this branch!
-
-You can use [this conversion notebook](https://colab.research.google.com/github/VE-FORBRYDERNE/mesh-transformer-jax/blob/modelcompat/convert_neo_pytorch_model_to_jax.ipynb) to convert a GPT-Neo model from pytorch_model.bin format (the format used by Hugging Face's transformers library) to a format usable by this branch. It assumes your pytorch_model.bin is in the root directory of your Google Drive, but you can easily change it to download and use a model from the Internet or Google Cloud Storage, or load from a different Google Drive folder. It will store the converted checkpoint in the directory (in your Colab instance) `/content/jax_checkpoint/`, which you can then download/upload somewhere for consumption.
-
-Then, use this config dictionary, instead of the default one, to load GPT-Neo-2.7B with 4 cores per replica:
-```python
-params = {
-    "compat": "neo",
-    "layers": 32,
-    "d_model": 2560,
-    "n_heads": 20,
-    "n_vocab": 50257,
-    "n_vocab_padding": 143,
-    "norm": "layernorm",
-    "pe": "fixed",
-    "seq": 2048,
-    "cores_per_replica": 4,
-}
-```
+This branch contains all of the patches from the following branches:
+* __modelcompat__ (can load GPT-Neo models; see that branch's README.md for more details)
+* __lowmem__ (uses substantially less memory when loading checkpoints)
+* __lowmem-fastinstall__ (also installs faster in Google Colab)
+* __main__
 
 ## Patches in this branch:
 

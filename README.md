@@ -20,12 +20,24 @@ params = {
 ```
 
 ## Patches in this branch:
+
+Inherited from **modelcompat**:
+
 * __(/mesh_transformer/layers.py and /mesh_transformer/transformer_shard.py)__ Added some optional GPT-Neo compatibility config options to the v1 transformer:
     * `compat`: A string that can be set to `"j"` or `"neo"`. Setting this to `"neo"` changes the architecture of the transformer network slightly to better conform to that of the GPT-Neo models. Defaults to `"j"`.
     * `attention_layers`: A list with `layers` strings inside of it, each of which is either `"global"` or `"local"`, specifying whether each layer should use global or local attention. If `compat` is set to `"neo"`, this defaults to a list with alternating `"global"` and `"local"`, otherwise defaults to all `"global"`.
     * `local_attention_window`: A positive integer that specifies the window size for layers with local attention. Has no effect if all of your layers are global attention layers. Defaults to 256.
     * `n_vocab_padding`: Amount of padding your input and output embeddings have. Defaults to 0.
 * __(/mesh_transformer/layers.py)__ The implementation of standard positional embedding has been changed because the original implementation would've thrown an error. This does not affect GPT-J since it uses rotary positional embedding.
+This branch uses less memory to load checkpoints just like the **lowmem** branch, and additionally takes less time to install (in Google Colaboratory) than the **main** branch.
+
+Inherited from **lowmem-fastinstall**:
+
+* __(/requirements.txt)__ Removed requirements that aren't needed to use inference and relaxed most of the still-existing requirements. Also now requires progressbar2. Installation takes less time now.
+
+Inherited from **lowmem**:
+
+* __(/mesh_transformer/checkpoint.py)__ You now only need around 4 gibibytes of system RAM, as opposed to originally over 13 gibibytes, to load the slim bfloat16 weights of GPT-J-6B and use them for inference on a TPU instance. This is thanks to a modified version of `read_ckpt` that loads small chunks of the model into the TPU memory at a time instead of loading the entire model into system memory and then moving the entire model into TPU memory. `read_ckpt` now takes much longer, but luckily `move_xmap` (in /mesh_transformer/transformer_shard.py) takes proportionally less time, leading to no noticeable net change in model-loading time.
 
 Inherited from **main**:
 

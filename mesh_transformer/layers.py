@@ -124,6 +124,43 @@ class RelativePositionEmbs(hk.Module):
         return values
 
 
+class TransposingLinear(hk.Module):
+    def __init__(self, input_size, output_size, with_bias=True, w_init=None, b_init=None, name=None):
+        if name is None:
+            name = "linear"
+        super().__init__(name=name)
+        self.input_size = input_size
+        self.output_size = output_size
+        self.with_bias = with_bias
+        self.w_init = w_init
+        self.b_init = b_init or jnp.zeros
+
+    def __call__(self, inputs: jnp.ndarray, *, precision=None, transpose_weights=False) -> jnp.ndarray:
+        if not inputs.shape:
+            raise ValueError("Input must not be scalar.")
+
+        input_size = self.input_size
+        output_size = self.output_size
+        dtype = inputs.dtype
+
+        w_init = self.w_init
+        if w_init is None:
+            stddev = 1. / np.sqrt(self.input_size)
+            w_init = hk.initializers.TruncatedNormal(stddev=stddev)
+        w = hk.get_parameter("w", [input_size, output_size], dtype, init=w_init)
+
+        if transpose_weights:
+            w = w.T
+        out = jnp.dot(inputs, w, precision=precision)
+
+        if self.with_bias:
+            b = hk.get_parameter("b", [self.output_size], dtype, init=self.b_init)
+            b = jnp.broadcast_to(b, out.shape)
+            out = out + b
+
+        return out
+
+
 def fixed_pos_embedding(x, seq_dim=0):
     dim = x.shape[-1]
     inv_freq = 1. / (10000 ** (np.arange(0, dim, 2) / dim))
@@ -182,7 +219,7 @@ class EmbeddingShard(hk.Module):
         else:
             self.positional_embeddings = None
 
-        self.proj = hk.Linear(self.out_dim, w_init=hk.initializers.TruncatedNormal(stddev=1 / np.sqrt(in_dim)), with_bias=self.compat != "neo")
+        self.proj = TransposingLinear(self.in_dim_per_shard, self.out_dim, w_init=hk.initializers.TruncatedNormal(stddev=1 / np.sqrt(in_dim)), with_bias=self.compat != "neo")
 
     def __call__(self, x, dtype=jnp.bfloat16, pe_length=0):
         shard_start_index = jax.lax.axis_index('shard') * self.in_dim_per_shard
@@ -577,7 +614,7 @@ class TransformerLayerShardV2(hk.Module):
 
 
 class ProjectionShard(hk.Module):
-    def __init__(self, config, name=None):
+    def __init__(self, config, name=None, embedding_shard=None):
         super().__init__(name=name)
         self.out_dim_unpadded = config["n_vocab"]
         out_dim = self.out_dim_unpadded + config.get("n_vocab_padding", 0)
@@ -592,11 +629,14 @@ class ProjectionShard(hk.Module):
 
         self.norm = norm
 
-        self.proj = hk.Linear(self.dim_per_shard, with_bias=self.compat != "neo")
+        if self.compat == "neo":
+            self.proj = embedding_shard.proj
+        else:
+            self.proj = TransposingLinear(config["d_model"], self.dim_per_shard)
 
     def __call__(self, x):
         x = self.norm(x)
-        proj = self.proj(x)
+        proj = self.proj(x, transpose_weights=self.compat == "neo")
 
         all_proj = jax.lax.all_gather(proj, 'shard')
 
@@ -605,7 +645,7 @@ class ProjectionShard(hk.Module):
     def loss(self, x, targets, z_loss=1):
         x = f_psum(x)
         x = self.norm(x)
-        logits = self.proj(x)
+        logits = self.proj(x, transpose_weights=self.compat == "neo")
 
         shard_start_index = jax.lax.axis_index('shard') * self.dim_per_shard
         global_max = jax.lax.pmax(jax.lax.stop_gradient(logits.max(-1, keepdims=True)), "shard")

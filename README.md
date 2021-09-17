@@ -1,7 +1,7 @@
 # Branch summary
 This branch contains all of the patches from the following branches:
 * __modelcompat__ (can load GPT-Neo models; see that branch's README.md for more details)
-* __lowmem__ (uses substantially less memory when loading checkpoints)
+* __lowmem__ (~~uses substantially less memory when loading checkpoints~~ This has been upstreamed. Now the only patch in this branch is that `read_ckpt` is identical to `read_ckpt_lowmem`.)
 * __lowmem-fastinstall__ (also installs faster in Google Colab)
 * __main__
 
@@ -23,7 +23,7 @@ Inherited from **lowmem-fastinstall**:
 
 Inherited from **lowmem**:
 
-* __(/mesh_transformer/checkpoint.py)__ You now only need around 4 gibibytes of system RAM, as opposed to originally over 13 gibibytes, to load the slim bfloat16 weights of GPT-J-6B and use them for inference on a TPU instance. This is thanks to a modified version of `read_ckpt` that loads small chunks of the model into the TPU memory at a time instead of loading the entire model into system memory and then moving the entire model into TPU memory. `read_ckpt` now takes much longer, but luckily `move_xmap` (in /mesh_transformer/transformer_shard.py) takes proportionally less time, leading to no noticeable net change in model-loading time.
+* __(/mesh_transformer/checkpoint.py)__ ~~You now only need around 4 gibibytes of system RAM, as opposed to originally over 13 gibibytes, to load the slim bfloat16 weights of GPT-J-6B and use them for inference on a TPU instance. This is thanks to a modified version of `read_ckpt` that loads small chunks of the model into the TPU memory at a time instead of loading the entire model into system memory and then moving the entire model into TPU memory. `read_ckpt` now takes much longer, but luckily `move_xmap` (in /mesh_transformer/transformer_shard.py) takes proportionally less time, leading to no noticeable net change in model-loading time.~~ This has been upstreamed. Now the only patch in this branch is that `read_ckpt` is identical to `read_ckpt_lowmem`.
 
 Inherited from **main**:
 
@@ -31,6 +31,21 @@ Inherited from **main**:
 * __(/requirements.txt)__ No longer requires einops.
 * __(/requirements.txt)__ Changed to specifically require JAX 0.2.12
 * __(/mesh_transformer/sampling.py)__ `nucleaus_filter` now subtracts infinity from logits to be removed instead of 1e10.
+
+# Table of contents
+1. [Mesh Transformer JAX](#mesh-transformer-jax)
+    1. [Updates](#updates)
+2. [Pretrained Models](#pretrained-models)
+   1. [GPT-J-6B](#gpt-j-6b)
+      1. [Links](#links)
+      2. [Acknowledgments](#acknowledgments)
+      3. [License](#license)
+      4. [Model Details](#model-details)
+      5. [Zero-Shot Evaluations](#zero-shot-evaluations)
+3. [Architecture and Usage](#architecture-and-usage)
+   1. [Fine-tuning](#fine-tuning)
+   2. [JAX Dependency](#jax-dependency)
+4. [TODO](#todo)
 
 # Mesh Transformer JAX
 

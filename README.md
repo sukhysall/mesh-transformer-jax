@@ -1,8 +1,7 @@
 # Branch summary
 This branch contains all of the patches from the following branches:
 * __modelcompat__ (can load GPT-Neo models; see that branch's README.md for more details)
-* __lowmem__ (~~uses substantially less memory when loading checkpoints~~ This has been upstreamed. Now the only patch in this branch is that `read_ckpt` is identical to `read_ckpt_lowmem`.)
-* __lowmem-fastinstall__ (also installs faster in Google Colab)
+* __lowmem-fastinstall__ (installs faster in Google Colab)
 * __main__
 
 ## Patches in this branch:
@@ -20,10 +19,6 @@ Inherited from **modelcompat**:
 Inherited from **lowmem-fastinstall**:
 
 * __(/requirements.txt)__ Removed requirements that aren't needed to use inference and relaxed most of the still-existing requirements. Also now requires progressbar2. Installation takes less time now.
-
-Inherited from **lowmem**:
-
-* __(/mesh_transformer/checkpoint.py)__ ~~You now only need around 4 gibibytes of system RAM, as opposed to originally over 13 gibibytes, to load the slim bfloat16 weights of GPT-J-6B and use them for inference on a TPU instance. This is thanks to a modified version of `read_ckpt` that loads small chunks of the model into the TPU memory at a time instead of loading the entire model into system memory and then moving the entire model into TPU memory. `read_ckpt` now takes much longer, but luckily `move_xmap` (in /mesh_transformer/transformer_shard.py) takes proportionally less time, leading to no noticeable net change in model-loading time.~~ This has been upstreamed. Now the only patch in this branch is that `read_ckpt` is identical to `read_ckpt_lowmem`.
 
 Inherited from **main**:
 

@@ -243,7 +243,8 @@ class CausalTransformer:
                                                                  ["batch", ...],
                                                                  ["batch", ...],
                                                                  ["batch", ...],
-                                                                 ["batch", ...]),
+                                                                 ["batch", ...],
+                                                                 ["shard", ...]),
                                                         out_axes=["batch", ...],
                                                         axis_resources={'shard': 'mp', 'batch': 'dp'})
 
@@ -323,7 +324,7 @@ class CausalTransformer:
         # print(f"eval done in {time.time() - start:.06}s")
         return out
 
-    def generate(self, ctx, ctx_length, gen_length, sampler_options, return_logits=False):
+    def generate(self, ctx, ctx_length, gen_length, sampler_options, return_logits=False, soft_embeddings=None):
         key = hk.PRNGSequence(random.randint(0, 2 ** 60))
 
         batch_size = ctx.shape[0]
@@ -336,7 +337,8 @@ class CausalTransformer:
                                   ctx,
                                   np.array(ctx_length, dtype=np.uint32),
                                   aux,
-                                  sampler_options)
+                                  sampler_options,
+                                  soft_embeddings)
 
 
 # this bypasses the CausalTransformerShard class (which causes ugly code) but in return allows layers to be processed

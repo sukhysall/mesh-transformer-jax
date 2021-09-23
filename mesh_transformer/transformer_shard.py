@@ -71,7 +71,7 @@ class CausalTransformerShard(hk.Module):
             "correct": correct
         }
 
-    def generate_initial(self, context, length):
+    def generate_initial(self, context, length, soft_embeddings=None):
         # slice last token off the context (we use that in generate_once to generate the first new token)
         last = context[-1:]
         context = context[:-1]
@@ -83,7 +83,7 @@ class CausalTransformerShard(hk.Module):
         else:
             attn_bias = 0
 
-        x = self.embed(context)
+        x = self.embed(context, soft_embeddings=soft_embeddings)
 
         states = []
 
@@ -94,7 +94,7 @@ class CausalTransformerShard(hk.Module):
 
         return self.proj(x), (last.astype(jnp.uint32), states, hk.next_rng_key())
 
-    def generate_once(self, new_tok, state):
+    def generate_once(self, new_tok, state, soft_embeddings=None):
         input_len = state[0]["v"].shape[0]
 
         if self.rpe is not None:
@@ -103,7 +103,7 @@ class CausalTransformerShard(hk.Module):
         else:
             attn_bias = 0
 
-        x = self.embed(new_tok)
+        x = self.embed(new_tok, soft_embeddings=soft_embeddings)
 
         new_states = []
 
@@ -187,19 +187,19 @@ class CausalTransformer:
                 "opt_state": optimizer.init(params)
             }
 
-        def generate(state, key, ctx, ctx_length, aux, sampler_options):
+        def generate(state, key, ctx, ctx_length, aux, sampler_options, soft_embeddings=None):
             sampler = config["sampler"]
             gen_length = self.gen_length
 
             def generate_sample(context, ctx_length, aux):
                 transformer = CausalTransformerShard(config)
-                _, initial_state = transformer.generate_initial(context, ctx_length)
+                _, initial_state = transformer.generate_initial(context, ctx_length, soft_embeddings=soft_embeddings)
 
                 def generate_scan_fn(carry, sampler_input):
                     next_token, decode_state, sample_key = carry
                     sample_key, new_key = jax.random.split(sample_key)
 
-                    logits, new_state = transformer.generate_once(next_token, decode_state)
+                    logits, new_state = transformer.generate_once(next_token, decode_state, soft_embeddings=soft_embeddings)
                     next_token, sample_info = sampler(sample_key, logits, sampler_input, **sampler_options)
 
                     if self.return_logits:

@@ -1,8 +1,11 @@
 # Branch summary
-This branch contains some basic baseline patches that are in all other branches in VE FORBRYDERNE's fork.
-You may be looking for the **all** branch, which contains many extra features.
+This branch is not ready yet but it will eventually support soft prompting (and it will be compatible with [Corolla Johnson's mkultra toolkit](https://github.com/corolla-johnson/mkultra)), as described in [arXiv:2104.08691](https://arxiv.org/pdf/2104.08691.pdf), in the three introductory paragraphs of section 2: Prompt Tuning. I'll be honest -- I didn't even read the rest of the paper.
 
 ## Patches in this branch:
+* __(/mesh_transformer/layers.py and /mesh_transformer/transformer_shard.py)__ Modified EmbeddingShard to support soft prompting ([arXiv:2104.08691](https://arxiv.org/pdf/2104.08691.pdf)).
+
+Inherited from **main**:
+
 * __(/mesh_transformer/layers.py)__ All einops calls have been replaced with equivalent JAX calls, removing the need for the Python package einops.
 * __(/requirements.txt)__ No longer requires einops.
 * __(/requirements.txt)__ Changed to specifically require JAX 0.2.12

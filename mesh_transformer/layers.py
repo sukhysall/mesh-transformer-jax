@@ -174,6 +174,7 @@ class EmbeddingShard(hk.Module):
         self.out_dim = out_dim
         self.in_dim_per_shard = in_dim // shards
         self.out_dim_per_shard = out_dim // shards
+        self.n_vocab_padding = config.get("n_vocab_padding", 0)
 
         if config["pe"] == "fixed":
             embed_init = hk.initializers.TruncatedNormal(stddev=0.02)
@@ -193,7 +194,7 @@ class EmbeddingShard(hk.Module):
             assert soft_embeddings.ndim == 2
             assert soft_embeddings.shape[1] == self.out_dim
 
-            soft_shard_start_index = self.in_dim + jax.lax.axis_index('shard') * soft_embeddings.shape[0]
+            soft_shard_start_index = self.in_dim + self.n_vocab_padding + jax.lax.axis_index('shard') * soft_embeddings.shape[0]
 
             input_soft_onehot = jax.nn.one_hot(x - soft_shard_start_index, soft_embeddings.shape[0])
             proj_out += jnp.dot(input_soft_onehot, soft_embeddings)

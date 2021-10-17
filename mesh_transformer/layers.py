@@ -189,6 +189,9 @@ class EmbeddingShard(hk.Module):
         input_onehot = jax.nn.one_hot(x - shard_start_index, self.in_dim_per_shard)
         proj_out = self.proj(input_onehot)
 
+        mask = jnp.broadcast_to((x < self.in_dim)[:, jnp.newaxis], proj_out.shape)
+        proj_out = jnp.where(mask, proj_out, 0)
+
         if soft_embeddings is not None:
             assert soft_embeddings.ndim == 2
             assert soft_embeddings.shape[1] == self.out_dim

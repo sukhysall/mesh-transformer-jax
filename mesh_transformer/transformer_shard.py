@@ -83,7 +83,7 @@ class CausalTransformerShard(hk.Module):
         else:
             attn_bias = 0
 
-        x = self.embed(context, soft_embeddings=soft_embeddings)
+        x = self.embed(context, pe_length=length - 1, soft_embeddings=soft_embeddings)
 
         states = []
 
@@ -103,7 +103,7 @@ class CausalTransformerShard(hk.Module):
         else:
             attn_bias = 0
 
-        x = self.embed(new_tok, soft_embeddings=soft_embeddings)
+        x = self.embed(new_tok, pe_length=state[0]["tokens_decoded"] + 1, soft_embeddings=soft_embeddings)
 
         new_states = []
 

@@ -183,7 +183,7 @@ class EmbeddingShard(hk.Module):
 
         self.proj = hk.Linear(self.out_dim, w_init=hk.initializers.TruncatedNormal(stddev=1 / np.sqrt(in_dim)))
 
-    def __call__(self, x, dtype=jnp.bfloat16, soft_embeddings=None):
+    def __call__(self, x, dtype=jnp.bfloat16, pe_length=0, soft_embeddings=None):
         shard_start_index = jax.lax.axis_index('shard') * self.in_dim_per_shard
 
         input_onehot = jax.nn.one_hot(x - shard_start_index, self.in_dim_per_shard)

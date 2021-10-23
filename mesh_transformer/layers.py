@@ -227,17 +227,15 @@ class EmbeddingShard(hk.Module):
         input_onehot = jax.nn.one_hot(x - shard_start_index, self.in_dim_per_shard)
         proj_out = self.proj(input_onehot)
 
-        proj_out = g_psum(proj_out)
-
         if self.positional_embeddings is not None:
-            all_pos_embed = jax.lax.all_gather(self.positional_embeddings, 'shard')
-
-            all_pos_embed = hk.Flatten()(jnp.transpose(all_pos_embed, (1, 0, 2)))
-
             pe_length = jnp.int32(pe_length)
-            pos_embed = jnp.roll(all_pos_embed, -pe_length, axis=0)[-proj_out.shape[0]:]
+            shard_roll_index = jnp.int32(jax.lax.axis_index('shard') * self.out_dim_per_shard)
+            pos_embed = jnp.pad(self.positional_embeddings, ((0, 0), (0, self.out_dim - self.out_dim_per_shard)))
+            pos_embed = jnp.roll(pos_embed, shard_roll_index, axis=1)
+            pos_embed = jnp.roll(pos_embed, -pe_length, axis=0)[-proj_out.shape[0]:]
             proj_out += pos_embed
 
+        proj_out = g_psum(proj_out)
         return proj_out
 
 

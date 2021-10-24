@@ -227,17 +227,15 @@ class EmbeddingShard(hk.Module):
         input_onehot = jax.nn.one_hot(x - shard_start_index, self.in_dim_per_shard)
         proj_out = self.proj(input_onehot)
 
-        proj_out = g_psum(proj_out)
-
         if self.positional_embeddings is not None:
-            all_pos_embed = jax.lax.all_gather(self.positional_embeddings, 'shard')
-
-            all_pos_embed = hk.Flatten()(jnp.transpose(all_pos_embed, (1, 0, 2)))
-
             pe_length = jnp.int32(pe_length)
-            pos_embed = jnp.roll(all_pos_embed, -pe_length, axis=0)[-proj_out.shape[0]:]
+            shard_roll_index = jnp.int32(jax.lax.axis_index('shard') * self.out_dim_per_shard)
+            pos_embed = jnp.pad(self.positional_embeddings, ((0, 0), (0, self.out_dim - self.out_dim_per_shard)))
+            pos_embed = jnp.roll(pos_embed, shard_roll_index, axis=1)
+            pos_embed = jnp.roll(pos_embed, -pe_length, axis=0)[-proj_out.shape[0]:]
             proj_out += pos_embed
 
+        proj_out = g_psum(proj_out)
         return proj_out
 
 
@@ -648,10 +646,14 @@ class ProjectionShard(hk.Module):
         logits = self.proj(x, transpose_weights=self.compat == "neo")
 
         shard_start_index = jax.lax.axis_index('shard') * self.dim_per_shard
+
+        vocab_mask = jnp.arange(self.dim_per_shard) + shard_start_index < self.out_dim_unpadded
+        logits -= (1 - vocab_mask) * 1e9
+
         global_max = jax.lax.pmax(jax.lax.stop_gradient(logits.max(-1, keepdims=True)), "shard")
         logits -= jax.lax.stop_gradient(global_max)
 
-        gt_onehot = jax.nn.one_hot(targets - shard_start_index, self.dim_per_shard)
+        gt_onehot = jax.nn.one_hot(targets - shard_start_index, self.dim_per_shard) * vocab_mask
         predicted_logits = jnp.sum(jnp.multiply(gt_onehot, logits), axis=-1)
         predicted_logits = g_psum(predicted_logits)
 
@@ -662,7 +664,7 @@ class ProjectionShard(hk.Module):
 
         loss = jnp.log(sum_exp_logits) - predicted_logits
 
-        loss += (1e-4 * jnp.square(jnp.log(sum_exp_logits)) * z_loss).mean()
+        loss += (1e-4 * jnp.square(jnp.log(sum_exp_logits)) * z_loss).sum() / g_psum(gt_onehot.sum())
 
         correct = (0.0 == predicted_logits)
 

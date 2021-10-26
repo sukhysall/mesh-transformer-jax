@@ -24,6 +24,7 @@ class CausalTransformerShard(hk.Module):
         heads = config["n_heads"]
         shards = config["cores_per_replica"]
         layer_count = config["layers"]
+        self.vocab_size = config["n_vocab"]
         self.compat = config.get("compat", "j")
 
         self.transformer_layers = []
@@ -68,9 +69,10 @@ class CausalTransformerShard(hk.Module):
     def loss(self, ctx, tgt, z_loss=False, mask=0.0):
         loss, correct = self.eval(ctx, tgt, float(z_loss), mask=mask)
 
+        assert loss.ndim == 1
         return {
-            "loss": loss.mean(),
-            "last_loss": loss[-1].mean(),
+            "loss": loss.sum() / (tgt < self.vocab_size).sum(),
+            "last_loss": loss[-1],
             "all_loss": loss,
             "correct": correct
         }

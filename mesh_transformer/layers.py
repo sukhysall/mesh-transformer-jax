@@ -647,13 +647,12 @@ class ProjectionShard(hk.Module):
 
         shard_start_index = jax.lax.axis_index('shard') * self.dim_per_shard
 
-        vocab_mask = jnp.arange(self.dim_per_shard) + shard_start_index < self.out_dim_unpadded
-        logits -= (1 - vocab_mask) * 1e9
+        vocab_mask = targets < self.out_dim_unpadded
 
         global_max = jax.lax.pmax(jax.lax.stop_gradient(logits.max(-1, keepdims=True)), "shard")
         logits -= jax.lax.stop_gradient(global_max)
 
-        gt_onehot = jax.nn.one_hot(targets - shard_start_index, self.dim_per_shard) * vocab_mask
+        gt_onehot = jax.nn.one_hot(targets - shard_start_index, self.dim_per_shard)
         predicted_logits = jnp.sum(jnp.multiply(gt_onehot, logits), axis=-1)
         predicted_logits = g_psum(predicted_logits)
 
@@ -664,11 +663,11 @@ class ProjectionShard(hk.Module):
 
         loss = jnp.log(sum_exp_logits) - predicted_logits
 
-        loss += (1e-4 * jnp.square(jnp.log(sum_exp_logits)) * z_loss).sum() / g_psum(gt_onehot.sum())
+        loss += (1e-4 * jnp.square(jnp.log(sum_exp_logits)) * z_loss).sum() / vocab_mask.sum()
 
         correct = (0.0 == predicted_logits)
 
-        return loss, correct
+        return vocab_mask * loss, vocab_mask * correct
 
 
 class Projection(hk.Module):

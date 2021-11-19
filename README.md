@@ -23,6 +23,7 @@ Inherited from **lowmem-fastinstall**:
 
 Inherited from **main**:
 
+* __(/mesh_transformer/util.py)__ ClipByGlobalNormState is now a subclass of optax.EmptyState instead of optax.OptState in order to maintain compatibility with optax 0.1.0 and higher.
 * __(/mesh_transformer/layers.py)__ All einops calls have been replaced with equivalent JAX calls, removing the need for the Python package einops.
 * __(/requirements.txt)__ No longer requires einops.
 * __(/requirements.txt)__ Changed to specifically require JAX 0.2.12

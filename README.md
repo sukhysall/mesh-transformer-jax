@@ -1,5 +1,6 @@
 # Branch summary
 This branch contains all of the patches from the following branches:
+* __soft__ (can load soft prompts (but not train them); see that branch's README.md for more details)
 * __modelcompat__ (can load GPT-Neo models; see that branch's README.md for more details)
 * __lowmem-fastinstall__ (installs faster in Google Colab)
 * __main__

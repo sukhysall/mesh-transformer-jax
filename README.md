@@ -1,5 +1,23 @@
 # Branch summary
-This branch is not ready yet but it will eventually support soft prompting (and it will be compatible with [Corolla Johnson's mkultra toolkit](https://github.com/corolla-johnson/mkultra)), as described in [arXiv:2104.08691](https://arxiv.org/pdf/2104.08691.pdf), in the three introductory paragraphs of section 2: Prompt Tuning. I'll be honest -- I didn't even read the rest of the paper.
+This branch supports soft prompting (compatible with [Corolla Johnson's mkultra toolkit](https://github.com/corolla-johnson/mkultra)), as described in [arXiv:2104.08691](https://arxiv.org/pdf/2104.08691.pdf), in the three introductory paragraphs of section 2: Prompt Tuning. I'll be honest -- I didn't even read the rest of the paper.
+
+### Soft prompt usage instructions:
+There's now an additional argument to `CausalTransformer.generate()` called `soft_embeddings` that should be a three-dimensional NumPy array with the same dtype as the model parameters, with shape `(cores_per_replica, math.ceil(tokens/cores_per_replica), d_model)` where `tokens` is the number of tokens in your soft prompt and `cores_per_replica` and `d_model` are from the model's configuration. Here's an example of how to use it (replace the `network.generate` call in the [Colab demo](#links) with this entire code snippet):
+```python
+# Your soft prompt should be an array with shape `(tokens, d_model)` prior to
+# reshaping.
+soft_embeddings: np.array = ...
+
+# Reshape it into the previously mentioned three-dimensional shape.
+rows = soft_embeddings.shape[0]
+padding_amount = -(rows % -params["cores_per_replica"])
+soft_embeddings = np.pad(soft_embeddings, ((0, padding_amount), (0, 0)))
+soft_embeddings = soft_embeddings.reshape(
+    (params["cores_per_replica"], -1, params["d_model"])
+)
+
+output = network.generate(batched_tokens, length, gen_len, {"top_p": np.ones(total_batch) * top_p, "temp": np.ones(total_batch) * temp}, soft_embeddings=soft_embeddings)
+```
 
 ## Patches in this branch:
 * __(/mesh_transformer/layers.py and /mesh_transformer/transformer_shard.py)__ Modified EmbeddingShard to support soft prompting ([arXiv:2104.08691](https://arxiv.org/pdf/2104.08691.pdf)).

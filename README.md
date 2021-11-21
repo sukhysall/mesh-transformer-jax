@@ -6,6 +6,10 @@ This branch contains all of the patches from the following branches:
 
 ## Patches in this branch:
 
+Inherited from **soft**:
+
+* __(/mesh_transformer/layers.py and /mesh_transformer/transformer_shard.py)__ Modified EmbeddingShard to support soft prompting ([arXiv:2104.08691](https://arxiv.org/pdf/2104.08691.pdf)).
+
 Inherited from **modelcompat**:
 
 * __(/mesh_transformer/layers.py and /mesh_transformer/transformer_shard.py)__ Changed the implementation of the loss function in ProjectionShard so that loss is only computed for tokens with token ID less than `n_vocab`.

@@ -221,11 +221,25 @@ class EmbeddingShard(hk.Module):
 
         self.proj = TransposingLinear(self.in_dim_per_shard, self.out_dim, w_init=hk.initializers.TruncatedNormal(stddev=1 / np.sqrt(in_dim)), with_bias=self.compat != "neo")
 
-    def __call__(self, x, dtype=jnp.bfloat16, pe_length=0):
+    def __call__(self, x, dtype=jnp.bfloat16, pe_length=0, soft_embeddings=None):
         shard_start_index = jax.lax.axis_index('shard') * self.in_dim_per_shard
 
         input_onehot = jax.nn.one_hot(x - shard_start_index, self.in_dim_per_shard)
         proj_out = self.proj(input_onehot)
+
+        mask = jnp.broadcast_to((x < self.in_dim)[:, jnp.newaxis], proj_out.shape)
+        proj_out = jnp.where(mask, proj_out, 0)
+
+        if soft_embeddings is not None:
+            assert soft_embeddings.ndim == 2
+            assert soft_embeddings.shape[1] == self.out_dim
+
+            soft_shard_start_index = self.in_dim + jax.lax.axis_index('shard') * soft_embeddings.shape[0]
+
+            input_soft_onehot = jax.nn.one_hot(x - soft_shard_start_index, soft_embeddings.shape[0])
+            proj_out += jnp.dot(input_soft_onehot, soft_embeddings)
+
+        proj_out = g_psum(proj_out)
 
         if self.positional_embeddings is not None:
             pe_length = jnp.int32(pe_length)

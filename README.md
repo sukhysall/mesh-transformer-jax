@@ -2,6 +2,7 @@
 This branch uses less memory to load checkpoints just like the **lowmem** branch, and additionally takes less time to install (in Google Colaboratory) than the **main** branch.
 
 ## Patches in this branch:
+* __(/mesh_transformer/util.py)__ ClipByGlobalNormState is now a subclass of optax.EmptyState instead of optax.OptState in order to maintain compatibility with optax 0.1.0 and higher.
 * __(/requirements.txt)__ Removed requirements that aren't needed to use inference and relaxed most of the still-existing requirements. Also now requires progressbar2. Installation takes less time now.
 
 Inherited from **lowmem**:

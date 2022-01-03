@@ -7,7 +7,7 @@ This branch uses less memory to load checkpoints just like the **lowmem** branch
 
 Inherited from **lowmem**:
 
-* __(/mesh_transformer/checkpoint.py)__ ~~You now only need around 4 gibibytes of system RAM, as opposed to originally over 13 gibibytes, to load the slim bfloat16 weights of GPT-J-6B and use them for inference on a TPU instance. This is thanks to a modified version of `read_ckpt` that loads small chunks of the model into the TPU memory at a time instead of loading the entire model into system memory and then moving the entire model into TPU memory. `read_ckpt` now takes much longer, but luckily `move_xmap` (in /mesh_transformer/transformer_shard.py) takes proportionally less time, leading to no noticeable net change in model-loading time.~~ This has been upstreamed. Now the only patch in this branch is that `read_ckpt` is identical to `read_ckpt_lowmem`.
+* __(/mesh_transformer/checkpoint.py)__ Copied the implementation of `read_ckpt` from https://github.com/VE-FORBRYDERNE/mtj-softtuner/commit/0b8a98f2a4cf84ff9dedd71808d7aa23e0551bc4
 
 Inherited from **main**:
 
@@ -131,6 +131,7 @@ Models roughly sorted by performance, or by FLOPs if not available.
 | GPT-3-13B*‡     | ✘       | 2.3e22         | 3.56          | 72.5%         | 67.9%        | 70.9%       | 78.5%  | ~800              |
 | GPT-3-175B*‡    | ✘       | 3.1e23         | 3.00          | 76.2%         | 70.2%        | 78.9%       | 81.0%  | ~800              |
 | GPT-3-Davinci‡  | ✘       | -----          | 3.0           | 75%           | 72%          | 78%         | 80%    | -----             |
+| Gopher 230B*	  | ✘	    | 6.31E+23	     | -----    	 | 74.50%        | 70.10%   	| 79.20%      | 81.80% | 1344              |
 | MT-NLG 530B*‡   | ✘       | -----          | -----         | 76.6%         | 73.0%        | 80.2%       | 82.0%  | -----             |
 
 `*` represents evaluation numbers reported by their respective authors, all other numbers are provided by

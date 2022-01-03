@@ -1,8 +1,8 @@
 # Branch summary
-~~This branch uses substantially less memory when loading checkpoints. See the patch notes below for more details.~~ This branch has been upstreamed. Now the only patch in this branch is that `read_ckpt` is identical to `read_ckpt_lowmem`.
+This branch uses less memory when loading checkpoints. See the patch notes below for more details.
 
 ## Patches in this branch:
-* __(/mesh_transformer/checkpoint.py)__ ~~You now only need around 4 gibibytes of system RAM, as opposed to originally over 13 gibibytes, to load the slim bfloat16 weights of GPT-J-6B and use them for inference on a TPU instance. This is thanks to a modified version of `read_ckpt` that loads small chunks of the model into the TPU memory at a time instead of loading the entire model into system memory and then moving the entire model into TPU memory. `read_ckpt` now takes much longer, but luckily `move_xmap` (in /mesh_transformer/transformer_shard.py) takes proportionally less time, leading to no noticeable net change in model-loading time.~~ This has been upstreamed. Now the only patch in this branch is that `read_ckpt` is identical to `read_ckpt_lowmem`.
+* __(/mesh_transformer/checkpoint.py)__ Copied the implementation of `read_ckpt` from https://github.com/VE-FORBRYDERNE/mtj-softtuner/commit/0b8a98f2a4cf84ff9dedd71808d7aa23e0551bc4
 
 Inherited from **main**:
 

@@ -27,6 +27,10 @@ Inherited from **lowmem-fastinstall**:
 * __(/mesh_transformer/util.py)__ ClipByGlobalNormState is now a subclass of optax.EmptyState instead of optax.OptState in order to maintain compatibility with optax 0.1.0 and higher.
 * __(/requirements.txt)__ Removed requirements that aren't needed to use inference and relaxed most of the still-existing requirements. Also now requires progressbar2. Installation takes less time now.
 
+Inherited from **lowmem**:
+
+* __(/mesh_transformer/checkpoint.py)__ Copied the implementation of `read_ckpt` from https://github.com/VE-FORBRYDERNE/mtj-softtuner/commit/0b8a98f2a4cf84ff9dedd71808d7aa23e0551bc4
+
 Inherited from **main**:
 
 * __(/mesh_transformer/layers.py)__ All einops calls have been replaced with equivalent JAX calls, removing the need for the Python package einops.
@@ -149,6 +153,7 @@ Models roughly sorted by performance, or by FLOPs if not available.
 | GPT-3-13B*‡     | ✘       | 2.3e22         | 3.56          | 72.5%         | 67.9%        | 70.9%       | 78.5%  | ~800              |
 | GPT-3-175B*‡    | ✘       | 3.1e23         | 3.00          | 76.2%         | 70.2%        | 78.9%       | 81.0%  | ~800              |
 | GPT-3-Davinci‡  | ✘       | -----          | 3.0           | 75%           | 72%          | 78%         | 80%    | -----             |
+| Gopher 230B*	  | ✘	    | 6.31E+23	     | -----    	 | 74.50%        | 70.10%   	| 79.20%      | 81.80% | 1344              |
 | MT-NLG 530B*‡   | ✘       | -----          | -----         | 76.6%         | 73.0%        | 80.2%       | 82.0%  | -----             |
 
 `*` represents evaluation numbers reported by their respective authors, all other numbers are provided by

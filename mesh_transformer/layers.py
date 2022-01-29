@@ -239,7 +239,7 @@ class EmbeddingShard(hk.Module):
         proj_out = self.proj(input_onehot)
 
         if self.has_sqrt_embed_scale:
-            proj_out *= jnp.sqrt(self.out_dim, dtype=proj_out.dtype)
+            proj_out *= jnp.sqrt(self.out_dim).astype(proj_out.dtype)
 
         if not self.post_embed and self.positional_embeddings is not None:
             shard_roll_index = jnp.int32(jax.lax.axis_index('shard') * self.out_dim_per_shard)

@@ -61,7 +61,7 @@ class CausalTransformerShard(hk.Module):
 
         for l in self.transformer_layers:
             x = x + hk.remat(l)(x, attn_bias)
-            if l.compat == "neo":
+            if l.compat in ("neo", "fairseq_lm"):
                 x = x + hk.remat(l.neo_ff)(x)
 
         return hk.remat(self.proj.loss)(x, target, z_loss)
@@ -96,7 +96,7 @@ class CausalTransformerShard(hk.Module):
         for l in self.transformer_layers:
             res, layer_state = l.get_init_decode_state(x, length - 1, attn_bias)
             x = x + res
-            if l.compat == "neo":
+            if l.compat in ("neo", "fairseq_lm"):
                 x = x + l.neo_ff(x)
             states.append(layer_state)
 
@@ -118,7 +118,7 @@ class CausalTransformerShard(hk.Module):
         for l, s in zip(self.transformer_layers, state):
             res, layer_state = l.decode_once(s, x, attn_bias)
             x = x + res
-            if l.compat == "neo":
+            if l.compat in ("neo", "fairseq_lm"):
                 x = x + l.neo_ff(x)
             new_states.append(layer_state)
 

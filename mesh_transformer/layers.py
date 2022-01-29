@@ -212,23 +212,36 @@ class EmbeddingShard(hk.Module):
         self.out_dim = out_dim
         self.in_dim_per_shard = in_dim // shards
         self.out_dim_per_shard = out_dim // shards
+        self.post_embed = config["pe"] in ("fairseq_sinusoidal", "sinusoidal")
+        self.has_sqrt_embed_scale = self.compat in ("fairseq_lm",)
 
         if config["pe"] == "fixed":
             embed_init = hk.initializers.TruncatedNormal(stddev=0.02)
             self.positional_embeddings = hk.get_parameter('pos_embs', [config["seq"], self.out_dim_per_shard], init=embed_init)
+        elif config["pe"] == "sinusoidal":  # Sinusoidal positional embedding exactly as described in section 3.5 of https://arxiv.org/pdf/1706.03762.pdf
+            assert out_dim % 2 == 0
+            sincos = fixed_pos_embedding(jnp.empty((config["seq"], out_dim)))
+            self.positional_embeddings = jnp.stack(sincos, axis=2).reshape((config["seq"], -1))
+        elif config["pe"] == "fairseq_sinusoidal":  # A slightly incorrect version of sinusoidal positional embedding used by fairseq
+            assert out_dim % 2 == 0
+            sincos = fixed_pos_embedding(jnp.empty((config["seq"], out_dim)))
+            self.positional_embeddings = jnp.concatenate(sincos, axis=-1)
         else:
             self.positional_embeddings = None
 
-        self.proj = TransposingLinear(self.in_dim_per_shard, self.out_dim, w_init=hk.initializers.TruncatedNormal(stddev=1 / np.sqrt(in_dim)), with_bias=self.compat != "neo")
+        self.proj = TransposingLinear(self.in_dim_per_shard, self.out_dim, w_init=hk.initializers.TruncatedNormal(stddev=1 / np.sqrt(in_dim)), with_bias=self.compat not in ("neo", "fairseq_lm"))
 
     def __call__(self, x, dtype=jnp.bfloat16, pe_length=0):
+        pe_length = jnp.int32(pe_length)
         shard_start_index = jax.lax.axis_index('shard') * self.in_dim_per_shard
 
         input_onehot = jax.nn.one_hot(x - shard_start_index, self.in_dim_per_shard)
         proj_out = self.proj(input_onehot)
 
-        if self.positional_embeddings is not None:
-            pe_length = jnp.int32(pe_length)
+        if self.has_sqrt_embed_scale:
+            proj_out *= jnp.sqrt(self.out_dim, dtype=proj_out.dtype)
+
+        if not self.post_embed and self.positional_embeddings is not None:
             shard_roll_index = jnp.int32(jax.lax.axis_index('shard') * self.out_dim_per_shard)
             pos_embed = jnp.pad(self.positional_embeddings, ((0, 0), (0, self.out_dim - self.out_dim_per_shard)))
             pos_embed = jnp.roll(pos_embed, shard_roll_index, axis=1)
@@ -236,6 +249,11 @@ class EmbeddingShard(hk.Module):
             proj_out += pos_embed
 
         proj_out = g_psum(proj_out)
+
+        if self.post_embed:
+            pos_embed = jnp.roll(pos_embed, -pe_length, axis=0)[-proj_out.shape[0]:]
+            proj_out += pos_embed
+
         return proj_out
 
 
@@ -286,14 +304,14 @@ class TransformerLayerShard(hk.Module):
         self.pe_rotary_dims = config.get("pe_rotary_dims", self.dim_per_head)
 
         self.norm = norm
-        if self.compat == "neo":
+        if self.compat in ("neo", "fairseq_lm"):
             self.norm_2 = getnorm(config["norm"])
 
-        self.q = hk.Linear(self.dim_per_shard, with_bias=False)
-        self.v = hk.Linear(self.dim_per_shard, with_bias=False)
-        self.k = hk.Linear(self.dim_per_shard, with_bias=False)
+        self.q = hk.Linear(self.dim_per_shard, with_bias=self.compat == "fairseq_lm")
+        self.v = hk.Linear(self.dim_per_shard, with_bias=self.compat == "fairseq_lm")
+        self.k = hk.Linear(self.dim_per_shard, with_bias=self.compat == "fairseq_lm")
 
-        self.o = hk.Linear(self.dim, with_bias=self.compat == "neo",
+        self.o = hk.Linear(self.dim, with_bias=self.compat in ("neo", "fairseq_lm"),
                            w_init=hk.initializers.TruncatedNormal(stddev=init_scale / np.sqrt(self.dim)))
 
         self.dense_proj = hk.Linear(self.dim_per_shard * 4)
@@ -317,7 +335,7 @@ class TransformerLayerShard(hk.Module):
 
         attention_logits = jnp.einsum("thd,Thd->htT", q, k)
 
-        if self.compat != "neo":
+        if self.compat not in ("neo", "fairseq_lm"):
             sqrt_key_size = np.sqrt(self.dim_per_head).astype(k.dtype)
             attention_logits = attention_logits / sqrt_key_size
 
@@ -360,7 +378,7 @@ class TransformerLayerShard(hk.Module):
         bias += attn_bias
 
         attn_out = self.self_attn(q, v, k, bias)
-        if self.compat == "neo":
+        if self.compat in ("neo", "fairseq_lm"):
             out = attn_out
         else:
             dense_out = self.ff(x)
@@ -394,7 +412,7 @@ class TransformerLayerShard(hk.Module):
         bias += attn_bias
 
         attn_out = self.self_attn(q, v, k, bias)
-        if self.compat == "neo":
+        if self.compat in ("neo", "fairseq_lm"):
             out = attn_out
         else:
             dense_out = self.ff(x)
@@ -426,7 +444,7 @@ class TransformerLayerShard(hk.Module):
         bias += attn_bias  # finally add attn bias for rpe
 
         attn_out = self.self_attn(q, v, k, bias)
-        if self.compat == "neo":
+        if self.compat in ("neo", "fairseq_lm"):
             out = attn_out
         else:
             dense_out = self.ff(x)
@@ -630,7 +648,7 @@ class ProjectionShard(hk.Module):
         if self.compat == "neo":
             self.proj = embedding_shard.proj
         else:
-            self.proj = TransposingLinear(config["d_model"], self.dim_per_shard)
+            self.proj = TransposingLinear(config["d_model"], self.dim_per_shard, with_bias=self.compat not in ("neo", "fairseq_lm"))
 
     def __call__(self, x):
         x = self.norm(x)

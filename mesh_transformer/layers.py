@@ -251,6 +251,7 @@ class EmbeddingShard(hk.Module):
         proj_out = g_psum(proj_out)
 
         if self.post_embed:
+            pos_embed = self.positional_embeddings
             pos_embed = jnp.roll(pos_embed, -pe_length, axis=0)[-proj_out.shape[0]:]
             proj_out += pos_embed
 

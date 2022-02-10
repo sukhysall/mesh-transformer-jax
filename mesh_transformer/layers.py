@@ -357,6 +357,9 @@ class TransformerLayerShard(hk.Module):
         v = self.v(x).reshape(x.shape[:-1] + (self.heads_per_shard, self.dim_per_head))
         k = self.k(x).reshape(x.shape[:-1] + (self.heads_per_shard, self.dim_per_head))
 
+        if self.compat in ("fairseq_lm",):
+            q /= jnp.sqrt(self.dim_per_head).astype(q.dtype)
+
         return q, v, k
 
     def neo_ff(self, x):

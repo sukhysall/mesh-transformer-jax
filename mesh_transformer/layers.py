@@ -161,11 +161,11 @@ class TransposingLinear(hk.Module):
         return out
 
 
-def fixed_pos_embedding(x, seq_dim=0):
+def fixed_pos_embedding(x, seq_dim=0, shift=0):
     dim = x.shape[-1]
     inv_freq = 1. / (10000 ** (np.arange(0, dim, 2) / dim))
 
-    sinusoid_inp = np.einsum('i , j -> i j', np.arange(x.shape[seq_dim]), inv_freq)
+    sinusoid_inp = np.einsum('i , j -> i j', np.arange(shift, x.shape[seq_dim] + shift), inv_freq)
 
     return np.sin(sinusoid_inp), np.cos(sinusoid_inp)
 
@@ -205,6 +205,7 @@ class EmbeddingShard(hk.Module):
         out_dim = config["d_model"]
         shards = config["cores_per_replica"]
         self.compat = config.get("compat", "j")
+        self.pe_shift = config.get("pe_shift", 2 if self.compat in ("fairseq_lm",) else 0)
 
         assert in_dim % shards == 0
 
@@ -220,11 +221,11 @@ class EmbeddingShard(hk.Module):
             self.positional_embeddings = hk.get_parameter('pos_embs', [config["seq"], self.out_dim_per_shard], init=embed_init)
         elif config["pe"] == "sinusoidal":  # Sinusoidal positional embedding exactly as described in section 3.5 of https://arxiv.org/pdf/1706.03762.pdf
             assert out_dim % 2 == 0
-            sincos = fixed_pos_embedding(jnp.empty((config["seq"], out_dim)))
+            sincos = fixed_pos_embedding(jnp.empty((config["seq"], out_dim)), shift=self.pe_shift)
             self.positional_embeddings = jnp.stack(sincos, axis=2).reshape((config["seq"], -1))
         elif config["pe"] == "fairseq_sinusoidal":  # A slightly incorrect version of sinusoidal positional embedding used by fairseq
             assert out_dim % 2 == 0
-            sincos = fixed_pos_embedding(jnp.empty((config["seq"], out_dim)))
+            sincos = fixed_pos_embedding(jnp.empty((config["seq"], out_dim)), shift=self.pe_shift)
             self.positional_embeddings = jnp.concatenate(sincos, axis=-1)
         else:
             self.positional_embeddings = None
@@ -257,7 +258,7 @@ class EmbeddingShard(hk.Module):
             shard_roll_index = jnp.int32(jax.lax.axis_index('shard') * self.out_dim_per_shard)
             pos_embed = jnp.pad(self.positional_embeddings, ((0, 0), (0, self.out_dim - self.out_dim_per_shard)))
             pos_embed = jnp.roll(pos_embed, shard_roll_index, axis=1)
-            pos_embed = jnp.roll(pos_embed, -pe_length, axis=0)[-proj_out.shape[0]:]
+            pos_embed = jnp.roll(pos_embed, -pe_length - self.pe_shift, axis=0)[-proj_out.shape[0]:]
             proj_out += pos_embed
 
         proj_out = g_psum(proj_out)
@@ -305,6 +306,7 @@ class TransformerLayerShard(hk.Module):
         self.attention_type = attention_type
         self.local_attention_window = config.get("local_attention_window", 256)
         self.compat = config.get("compat", "j")
+        self.pe_shift = config.get("pe_shift", 2 if self.compat in ("fairseq_lm",) else 0)
 
         assert dim % heads == 0
         assert heads % shards == 0
@@ -339,7 +341,7 @@ class TransformerLayerShard(hk.Module):
             q_rot = q[:, :, :self.pe_rotary_dims]
             q_pass = q[:, :, self.pe_rotary_dims:]
 
-            sincos = fixed_pos_embedding(k_rot)
+            sincos = fixed_pos_embedding(k_rot, shift=self.pe_shift)
             q_rot = apply_rotary_pos_emb(q_rot, sincos)
             k_rot = apply_rotary_pos_emb(k_rot, sincos)
 
@@ -368,6 +370,9 @@ class TransformerLayerShard(hk.Module):
         q = self.q(x).reshape(x.shape[:-1] + (self.heads_per_shard, self.dim_per_head))
         v = self.v(x).reshape(x.shape[:-1] + (self.heads_per_shard, self.dim_per_head))
         k = self.k(x).reshape(x.shape[:-1] + (self.heads_per_shard, self.dim_per_head))
+
+        if self.compat in ("fairseq_lm",):
+            q /= jnp.sqrt(self.dim_per_head).astype(q.dtype)
 
         return q, v, k
 

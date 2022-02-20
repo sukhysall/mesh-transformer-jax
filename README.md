@@ -13,13 +13,16 @@ Inherited from **soft**:
 
 Inherited from **modelcompat**:
 
+* __(/mesh_transformer/layers.py)__ Added support for sinusoidal positional embedding, both fairseq-style and non-fairseq-style. Can be enabled using `"pe": "fairseq_sinusoidal"` and `"pe": "sinusoidal"`.
 * __(/mesh_transformer/layers.py and /mesh_transformer/transformer_shard.py)__ Changed the implementation of the loss function in ProjectionShard so that loss is only computed for tokens with token ID less than `n_vocab`.
 * __(/convert_neo_pytorch_model_to_jax.ipynb)__ Created this notebook, which converts GPT-Neo models from pytorch_model.bin format to a format usable by this branch.
-* __(/mesh_transformer/layers.py and /mesh_transformer/transformer_shard.py)__ Added some optional GPT-Neo compatibility config options to the v1 transformer:
-    * `compat`: A string that can be set to `"j"` or `"neo"`. Setting this to `"neo"` changes the architecture of the transformer network slightly to better conform to that of the GPT-Neo models. Defaults to `"j"`.
+* __(/mesh_transformer/layers.py and /mesh_transformer/transformer_shard.py)__ Added some optional GPT-Neo/fairseq compatibility config options to the v1 transformer:
+    * `compat`: A string that can be set to `"j"`, `"neo"` or `"fairseq"`. Setting this to `"neo"` or `"fairseq"` changes the architecture of the transformer network slightly to better conform to that of the GPT-Neo/fairseq models. Defaults to `"j"`.
     * `attention_layers`: A list with `layers` strings inside of it, each of which is either `"global"` or `"local"`, specifying whether each layer should use global or local attention. If `compat` is set to `"neo"`, this defaults to a list with alternating `"global"` and `"local"`, otherwise defaults to all `"global"`.
     * `local_attention_window`: A positive integer that specifies the window size for layers with local attention. Has no effect if all of your layers are global attention layers. Defaults to 256.
     * `n_vocab_padding`: Amount of padding your input and output embeddings have. Defaults to 0.
+    * `pe_shift`: What the first position ID should be when doing positional embedding. If `compat` is set to `"fairseq"`, this defaults to 2, otherwise 0.
+    * `activation`: Which activation function to use -- `"gelu_new"` if you want to use the tanh approximation of the GELU function from section 2 of https://arxiv.org/abs/1606.08415 used in GPT-2, GPT-Neo and GPT-J, or `"gelu"` if you want to use the standard definition of GELU that uses the error function that is also defined in the same section of that paper. If `compat` is set to `"fairseq"`, this defaults to `"gelu"`, otherwise `"gelu_new"`.
 * __(/mesh_transformer/layers.py)__ The implementation of standard positional embedding has been changed because the original implementation would've thrown an error. This does not affect GPT-J since it uses rotary positional embedding.
 
 Inherited from **lowmem-fastinstall**:

@@ -75,6 +75,14 @@ def getnorm(type):
     else:
         raise Exception("Not implemented")
 
+def getactfn(type):
+    if type == "gelu_new":
+        return lambda x: jax.nn.gelu(x, approximate=True)
+    elif type == "gelu":
+        return lambda x: jax.nn.gelu(x, approximate=False)
+    else:
+        raise Exception("Not implemented")
+
 
 class RelativePositionEmbs(hk.Module):
     @staticmethod
@@ -307,6 +315,7 @@ class TransformerLayerShard(hk.Module):
         self.local_attention_window = config.get("local_attention_window", 256)
         self.compat = config.get("compat", "j")
         self.pe_shift = config.get("pe_shift", 2 if self.compat in ("fairseq_lm",) else 0)
+        self.activation_fn = getactfn(config.get("activation", "gelu" if self.compat in ("fairseq_lm",) else "gelu_new"))
 
         assert dim % heads == 0
         assert heads % shards == 0
@@ -363,7 +372,7 @@ class TransformerLayerShard(hk.Module):
 
     def ff(self, x):
         dense_proj = self.dense_proj(x)
-        dense_proj = jax.nn.gelu(dense_proj)
+        dense_proj = self.activation_fn(dense_proj)
         return self.dense_proj_o(dense_proj)
 
     def qvk_proj(self, x):

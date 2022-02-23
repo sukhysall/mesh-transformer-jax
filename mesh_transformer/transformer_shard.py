@@ -1,7 +1,8 @@
 import gc
 import random
 import time
-from functools import partial
+from functools import partial, reduce
+from typing import Dict
 
 import haiku as hk
 import jax
@@ -16,6 +17,96 @@ from mesh_transformer.layers import EmbeddingShard, TransformerLayerShard, Relat
     TransformerLayerShardV2, Projection, EmbeddingShardV2
 from mesh_transformer.util import to_f32, to_bf16, maybe_shard, head_print, global_norm
 from jax.experimental import PartitionSpec as P
+
+
+class PlaceholderTensor:
+    def __init__(self, *shape: int):
+        self.shape = shape
+        self.size = reduce(lambda x, y: x * y, shape, 1)
+
+    def __repr__(self):
+        return type(self).__name__ + repr(self.shape)
+
+    def __str__(self):
+        return type(self).__name__ + str(self.shape)
+
+
+def _create_dict(**kwargs):
+    d = {}
+    for k, v in kwargs.items():
+        if v is not None:
+            d[k] = v
+    return d
+
+
+def compute_placeholder_params(config: dict):
+    compat = config.get("compat", "j")
+    pe = config["pe"]
+
+    if compat not in ("j", "neo", "fairseq_lm"):
+        raise NotImplementedError(f"Unsupported model type {repr(compat)}")
+    if pe not in ("rotary", "fixed", "sinusoidal", "fairseq_sinusoidal"):
+        raise NotImplementedError(f"Unsupported positional embedding type {repr(pe)}")
+
+    params: Dict[str, Dict[str, PlaceholderTensor]] = {}
+    seq = config["seq"]
+    in_dim = config["n_vocab"] + config.get("n_vocab_padding", 0)
+    out_dim = config["d_model"]
+    shards = config["cores_per_replica"]
+    in_dim_per_shard = in_dim // shards
+    out_dim_per_shard = out_dim // shards
+    ffn_dim_per_shard = out_dim_per_shard * 4
+
+    if config["pe"] == "fixed":
+        params["causal_transformer_shard/~/embedding_shard"] = _create_dict(  # positional_embeddings
+            pos_embs=PlaceholderTensor(shards, seq, out_dim_per_shard),
+        )
+
+    params["causal_transformer_shard/~/embedding_shard/~/linear"] = _create_dict(  # proj
+        w=PlaceholderTensor(shards, in_dim_per_shard, out_dim),
+        b=PlaceholderTensor(shards, out_dim) if compat == "j" else None,
+    )
+
+    for layer in range(config["layers"]):
+        header = f"causal_transformer_shard/~/layer_{layer}/~/"
+        for footer in ("linear", "linear_1", "linear_2"):  # q, v, k
+            params[header + footer] = _create_dict(
+                w=PlaceholderTensor(shards, out_dim, out_dim_per_shard),
+                b=PlaceholderTensor(shards, out_dim_per_shard) if compat == "fairseq_lm" else None,
+            )
+        params[header + "linear_3"] = _create_dict(  # o
+            w=PlaceholderTensor(shards, out_dim_per_shard, out_dim),
+            b=PlaceholderTensor(shards, out_dim) if compat in ("neo", "fairseq_lm") else None,
+        )
+        params[header + "linear_4"] = _create_dict(  # dense_proj
+            w=PlaceholderTensor(shards, out_dim, ffn_dim_per_shard),
+            b=PlaceholderTensor(shards, ffn_dim_per_shard),
+        )
+        params[header + "linear_5"] = _create_dict(  # dense_proj_o
+            w=PlaceholderTensor(shards, ffn_dim_per_shard, out_dim),
+            b=PlaceholderTensor(shards, out_dim),
+        )
+        params[header + "replicated_layer_norm"] = _create_dict(  # norm
+            offset=PlaceholderTensor(shards, out_dim),
+            scale=PlaceholderTensor(shards, out_dim),
+        )
+        if compat in ("neo", "fairseq_lm"):
+            params[header + "replicated_layer_norm_1"] = _create_dict(  # norm_2
+                offset=PlaceholderTensor(shards, out_dim),
+                scale=PlaceholderTensor(shards, out_dim),
+            )
+
+    if compat != "neo":
+        params["causal_transformer_shard/~/projection_shard/~/linear"] = _create_dict(  # proj
+            w=PlaceholderTensor(shards, out_dim, in_dim_per_shard),
+            b=PlaceholderTensor(shards, in_dim_per_shard) if compat == "j" else None,
+        )
+    params["causal_transformer_shard/~/projection_shard/~/replicated_layer_norm"] = _create_dict(  # norm
+        offset=PlaceholderTensor(shards, out_dim),
+        scale=PlaceholderTensor(shards, out_dim),
+    )
+
+    return params
 
 
 class CausalTransformerShard(hk.Module):
@@ -116,7 +207,7 @@ class CausalTransformerShard(hk.Module):
 
 
 class CausalTransformer:
-    def __init__(self, config):
+    def __init__(self, config, dematerialized=False):
         self.config = config
         optimizer = config["optimizer"]
 
@@ -275,7 +366,11 @@ class CausalTransformer:
         head_print("mp", mp)
 
         self.gen_length = 1
-        self.state = self.init_xmap(jnp.array(key.take(mp_per_host)), x)
+        self.state = self.init_xmap(jnp.array(key.take(mp_per_host)), x) if not dematerialized else {
+            "params": compute_placeholder_params(config),
+            "step": jnp.zeros(mp, dtype=jnp.uint32),
+            "opt_state": optimizer.init({})
+        }
 
         param_count = hk.data_structures.tree_size(self.state['params'])
         head_print(f"Total parameters: {param_count}")

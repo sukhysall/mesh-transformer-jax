@@ -250,9 +250,6 @@ class EmbeddingShard(hk.Module):
         mask = jnp.broadcast_to((x < self.in_dim)[:, jnp.newaxis], proj_out.shape)
         proj_out = jnp.where(mask, proj_out, 0)
 
-        if self.has_sqrt_embed_scale:
-            proj_out *= jnp.sqrt(self.out_dim).astype(proj_out.dtype)
-
         if soft_embeddings is not None:
             assert soft_embeddings.ndim == 2
             assert soft_embeddings.shape[1] == self.out_dim
@@ -261,6 +258,9 @@ class EmbeddingShard(hk.Module):
 
             input_soft_onehot = jax.nn.one_hot(x - soft_shard_start_index, soft_embeddings.shape[0])
             proj_out += jnp.dot(input_soft_onehot, soft_embeddings)
+
+        if self.has_sqrt_embed_scale:
+            proj_out *= jnp.sqrt(self.out_dim).astype(proj_out.dtype)
 
         if not self.post_embed and self.positional_embeddings is not None:
             shard_roll_index = jnp.int32(jax.lax.axis_index('shard') * self.out_dim_per_shard)

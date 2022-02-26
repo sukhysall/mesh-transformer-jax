@@ -694,6 +694,7 @@ class ProjectionShard(hk.Module):
 
         vocab_mask = targets < self.out_dim_unpadded
         logit_mask = jnp.arange(self.dim_per_shard) + shard_start_index < self.out_dim_unpadded
+        logits = jnp.where(logit_mask, logits, -1e9)
 
         global_max = jax.lax.pmax(jax.lax.stop_gradient(logits.max(-1, keepdims=True, initial=-jnp.inf, where=logit_mask)), "shard")
         logits -= jax.lax.stop_gradient(global_max)

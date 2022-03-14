@@ -387,7 +387,7 @@ class TransformerLayerShard(hk.Module):
 
         attention_logits = jnp.einsum("thd,Thd->htT", q, k)
 
-        if self.compat not in ("neo", "fairseq_lm", "neox"):
+        if self.compat not in ("neo", "fairseq_lm"):
             sqrt_key_size = np.sqrt(self.dim_per_head).astype(k.dtype)
             attention_logits = attention_logits / sqrt_key_size
 

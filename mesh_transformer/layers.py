@@ -35,6 +35,35 @@ class ReplicatedLayerNorm(hk.Module):
             return inv * (inputs - mean)
 
 
+class ReplicatedDoubleLayerNorm(hk.Module):
+    def __init__(self, offset=True):
+        super().__init__(name="replicated_layer_norm")
+        self.offset = offset
+
+    def __call__(self, inputs: jnp.ndarray) -> jnp.ndarray:
+        mean = jnp.mean(inputs, axis=-1, keepdims=True)
+        variance = jnp.var(inputs, axis=-1, keepdims=True)
+
+        param_shape = inputs.shape[-1:]
+        scale = hk.get_parameter("scale", param_shape, inputs.dtype, init=jnp.ones)
+        n_shards = scale.shape[0]
+        mp_index = jax.lax.axis_index('shard') // (n_shards // 2)
+        scale = jax.lax.all_gather(scale, "shard")[mp_index]
+
+        offset = hk.get_parameter("offset", param_shape, inputs.dtype, init=jnp.zeros)
+        offset = jax.lax.all_gather(offset, "shard")[mp_index]
+
+        scale = jnp.broadcast_to(scale, inputs.shape)
+        offset = jnp.broadcast_to(offset, inputs.shape)
+        mean = jnp.broadcast_to(mean, inputs.shape)
+
+        inv = scale * jax.lax.rsqrt(variance + 1e-5)
+        if self.offset:
+            return inv * (inputs - mean) + offset
+        else:
+            return inv * (inputs - mean)
+
+
 class RMSNorm(hk.Module):
     def __init__(self, offset, elementwise):
         super().__init__()
@@ -64,6 +93,10 @@ def getnorm(type):
         return hk.LayerNorm(-1, True, True)
     elif type == "layernorm-nobias":
         return ReplicatedLayerNorm(offset=False)
+    elif type == "doublelayernorm":
+        return ReplicatedDoubleLayerNorm()
+    elif type == "doublelayernorm-nobias":
+        return ReplicatedDoubleLayerNorm(offset=False)
     elif type == "rmsnorm":
         return RMSNorm(False, True)
     elif type == "scalenorm":
@@ -238,7 +271,7 @@ class EmbeddingShard(hk.Module):
         else:
             self.positional_embeddings = None
 
-        self.proj = TransposingLinear(self.in_dim_per_shard, self.out_dim, w_init=hk.initializers.TruncatedNormal(stddev=1 / np.sqrt(in_dim)), with_bias=self.compat not in ("neo", "fairseq_lm"))
+        self.proj = TransposingLinear(self.in_dim_per_shard, self.out_dim, w_init=hk.initializers.TruncatedNormal(stddev=1 / np.sqrt(in_dim)), with_bias=self.compat not in ("neo", "fairseq_lm", "neox"))
 
     def __call__(self, x, dtype=jnp.bfloat16, pe_length=0):
         pe_length = jnp.int32(pe_length)
@@ -304,6 +337,8 @@ class TransformerLayerShard(hk.Module):
         self.compat = config.get("compat", "j")
         self.pe_shift = config.get("pe_shift", 2 if self.compat in ("fairseq_lm",) else 0)
         self.activation_fn = getactfn(config.get("activation", "gelu" if self.compat in ("fairseq_lm",) else "gelu_new"))
+        self.neox_gpt_j_residual = self.compat == "neox" and config.get("neox_gpt_j_residual", True)
+        self.use_combined_qkv = config.get("combined_qkv", self.compat == "neox")
 
         assert dim % heads == 0
         assert heads % shards == 0
@@ -319,16 +354,21 @@ class TransformerLayerShard(hk.Module):
         if self.compat in ("neo", "fairseq_lm"):
             self.norm_2 = getnorm(config["norm"])
 
-        self.q = hk.Linear(self.dim_per_shard, with_bias=self.compat == "fairseq_lm")
-        self.v = hk.Linear(self.dim_per_shard, with_bias=self.compat == "fairseq_lm")
-        self.k = hk.Linear(self.dim_per_shard, with_bias=self.compat == "fairseq_lm")
+        if self.use_combined_qkv:
+            self.qkv = hk.Linear(self.dim_per_shard * 3, with_bias=self.compat in ("fairseq_lm", "neox"), name="combined_qkv")
+        else:
+            self.q = hk.Linear(self.dim_per_shard, with_bias=self.compat in ("fairseq_lm", "neox"), name="linear")
+            self.v = hk.Linear(self.dim_per_shard, with_bias=self.compat in ("fairseq_lm", "neox"), name="linear_1")
+            self.k = hk.Linear(self.dim_per_shard, with_bias=self.compat in ("fairseq_lm", "neox"), name="linear_2")
 
-        self.o = hk.Linear(self.dim, with_bias=self.compat in ("neo", "fairseq_lm"),
-                           w_init=hk.initializers.TruncatedNormal(stddev=init_scale / np.sqrt(self.dim)))
+        self.o = hk.Linear(self.dim, with_bias=self.compat in ("neo", "fairseq_lm", "neox"),
+                           w_init=hk.initializers.TruncatedNormal(stddev=init_scale / np.sqrt(self.dim)),
+                           name="linear_3")
 
-        self.dense_proj = hk.Linear(self.dim_per_shard * 4)
+        self.dense_proj = hk.Linear(self.dim_per_shard * 4, name="linear_4")
         self.dense_proj_o = hk.Linear(self.dim,
-                                      w_init=hk.initializers.TruncatedNormal(stddev=init_scale / np.sqrt(self.dim)))
+                                      w_init=hk.initializers.TruncatedNormal(stddev=init_scale / np.sqrt(self.dim)),
+                                      name="linear_5")
 
     def self_attn(self, q, v, k, attn_bias):
         if self.is_rotary:
@@ -347,7 +387,7 @@ class TransformerLayerShard(hk.Module):
 
         attention_logits = jnp.einsum("thd,Thd->htT", q, k)
 
-        if self.compat not in ("neo", "fairseq_lm"):
+        if self.compat not in ("neo", "fairseq_lm", "neox"):
             sqrt_key_size = np.sqrt(self.dim_per_head).astype(k.dtype)
             attention_logits = attention_logits / sqrt_key_size
 
@@ -364,9 +404,13 @@ class TransformerLayerShard(hk.Module):
         return self.dense_proj_o(dense_proj)
 
     def qvk_proj(self, x):
-        q = self.q(x).reshape(x.shape[:-1] + (self.heads_per_shard, self.dim_per_head))
-        v = self.v(x).reshape(x.shape[:-1] + (self.heads_per_shard, self.dim_per_head))
-        k = self.k(x).reshape(x.shape[:-1] + (self.heads_per_shard, self.dim_per_head))
+        if self.use_combined_qkv:
+            m = self.qkv(x).reshape(x.shape[:-1] + (self.heads_per_shard, self.dim_per_head * 3))
+            q, k, v = jnp.split(m, 3, axis=-1)
+        else:
+            q = self.q(x).reshape(x.shape[:-1] + (self.heads_per_shard, self.dim_per_head))
+            v = self.v(x).reshape(x.shape[:-1] + (self.heads_per_shard, self.dim_per_head))
+            k = self.k(x).reshape(x.shape[:-1] + (self.heads_per_shard, self.dim_per_head))
 
         if self.compat in ("fairseq_lm",):
             q /= jnp.sqrt(self.dim_per_head).astype(q.dtype)
@@ -380,6 +424,7 @@ class TransformerLayerShard(hk.Module):
 
     def __call__(self, x, attn_bias):
         x = f_psum(x)
+        x_original = x
         x = self.norm(x)
 
         q, v, k = self.qvk_proj(x)
@@ -393,8 +438,12 @@ class TransformerLayerShard(hk.Module):
         bias += attn_bias
 
         attn_out = self.self_attn(q, v, k, bias)
-        if self.compat in ("neo", "fairseq_lm"):
+        if not self.neox_gpt_j_residual and self.compat in ("neo", "fairseq_lm", "neox"):
             out = attn_out
+        elif self.neox_gpt_j_residual:
+            x2 = self.norm_2(x_original)
+            dense_out = self.ff(x2)
+            out = attn_out + dense_out
         else:
             dense_out = self.ff(x)
             out = attn_out + dense_out
@@ -663,7 +712,7 @@ class ProjectionShard(hk.Module):
         if self.compat == "neo":
             self.proj = embedding_shard.proj
         else:
-            self.proj = TransposingLinear(config["d_model"], self.dim_per_shard, with_bias=self.compat not in ("neo", "fairseq_lm"))
+            self.proj = TransposingLinear(config["d_model"], self.dim_per_shard, with_bias=self.compat not in ("neo", "fairseq_lm", "neox"))
 
     def __call__(self, x):
         x = self.norm(x)

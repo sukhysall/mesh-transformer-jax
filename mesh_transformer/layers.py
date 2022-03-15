@@ -351,7 +351,7 @@ class TransformerLayerShard(hk.Module):
         self.pe_rotary_dims = config.get("pe_rotary_dims", self.dim_per_head)
 
         self.norm = norm
-        if self.compat in ("neo", "fairseq_lm"):
+        if self.compat in ("neo", "fairseq_lm", "neox"):
             self.norm_2 = getnorm(config["norm"])
 
         if self.use_combined_qkv:
@@ -453,6 +453,7 @@ class TransformerLayerShard(hk.Module):
     # iterate the decoding process by a single token
     def decode_once(self, decode_state, x, attn_bias):
         x = f_psum(x)
+        x_original = x
         x = self.norm(x)
 
         assert x.shape[0] == 1
@@ -476,8 +477,12 @@ class TransformerLayerShard(hk.Module):
         bias += attn_bias
 
         attn_out = self.self_attn(q, v, k, bias)
-        if self.compat in ("neo", "fairseq_lm"):
+        if not self.neox_gpt_j_residual and self.compat in ("neo", "fairseq_lm", "neox"):
             out = attn_out
+        elif self.neox_gpt_j_residual:
+            x2 = self.norm_2(x_original)
+            dense_out = self.ff(x2)
+            out = attn_out + dense_out
         else:
             dense_out = self.ff(x)
             out = attn_out + dense_out
@@ -491,6 +496,7 @@ class TransformerLayerShard(hk.Module):
     # take in right aligned context tokens and generate an initial state
     def get_init_decode_state(self, x, given_length, attn_bias):
         x = f_psum(x)
+        x_original = x
         x = self.norm(x)
 
         q, v, k = self.qvk_proj(x)
@@ -508,8 +514,12 @@ class TransformerLayerShard(hk.Module):
         bias += attn_bias  # finally add attn bias for rpe
 
         attn_out = self.self_attn(q, v, k, bias)
-        if self.compat in ("neo", "fairseq_lm"):
+        if not self.neox_gpt_j_residual and self.compat in ("neo", "fairseq_lm", "neox"):
             out = attn_out
+        elif self.neox_gpt_j_residual:
+            x2 = self.norm_2(x_original)
+            dense_out = self.ff(x2)
+            out = attn_out + dense_out
         else:
             dense_out = self.ff(x)
             out = attn_out + dense_out

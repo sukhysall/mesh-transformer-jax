@@ -46,9 +46,10 @@ class ReplicatedDoubleLayerNorm(hk.Module):
 
         param_shape = inputs.shape[-1:]
         scale = hk.get_parameter("scale", param_shape, inputs.dtype, init=jnp.ones)
+        scale = jax.lax.all_gather(scale, "shard")
         shards_per_checkpoint_shard = scale.shape[0] // 2
         mp_index = (jax.lax.axis_index('shard') // shards_per_checkpoint_shard) * shards_per_checkpoint_shard
-        scale = jax.lax.all_gather(scale, "shard")[mp_index]
+        scale = scale[mp_index]
 
         offset = hk.get_parameter("offset", param_shape, inputs.dtype, init=jnp.zeros)
         offset = jax.lax.all_gather(offset, "shard")[mp_index]

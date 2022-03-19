@@ -203,6 +203,50 @@ class TransposingLinear(hk.Module):
         return out
 
 
+class AllReduceLinear(hk.Module):
+    def __init__(self, output_size, with_bias=True, w_init=None, b_init=None, name=None, all_reduce=False, shards=None):
+        if all_reduce and shards is None:
+            raise ValueError("Shards must be specified if `all_reduce` is true")
+        if name is None:
+            name = "linear"
+        super().__init__(name=name)
+        self.input_size = None
+        self.output_size = output_size
+        self.with_bias = with_bias
+        self.w_init = w_init
+        self.b_init = b_init or jnp.zeros
+        self.all_reduce = all_reduce
+        self.shards = shards
+
+    def __call__(self, inputs: jnp.ndarray, *, precision=None) -> jnp.ndarray:
+        if not inputs.shape:
+            raise ValueError("Input must not be scalar.")
+
+        input_size = self.input_size = inputs.shape[-1]
+        output_size = self.output_size
+        dtype = inputs.dtype
+
+        w_init = self.w_init
+        if w_init is None:
+            stddev = 1. / np.sqrt(self.input_size)
+            w_init = hk.initializers.TruncatedNormal(stddev=stddev)
+        w = hk.get_parameter("w", [input_size, output_size], dtype, init=w_init)
+
+        out = jnp.dot(inputs, w, precision=precision)
+
+        if self.all_reduce:
+            out = g_psum(out)
+
+        if self.with_bias:
+            b = hk.get_parameter("b", [self.output_size], dtype, init=self.b_init)
+            if self.all_reduce:
+                b *= self.shards
+            b = jnp.broadcast_to(b, out.shape)
+            out = out + b
+
+        return out
+
+
 def fixed_pos_embedding(x, seq_dim=0, shift=0, neox=False):
     dim = x.shape[-1]
     inv_freq = 1. / (10000 ** (np.arange(0, dim, 2) / dim))
@@ -350,6 +394,7 @@ class TransformerLayerShard(hk.Module):
         self.activation_fn = getactfn(config.get("activation", "gelu" if self.compat in ("fairseq_lm",) else "gelu_new"))
         self.neox_gpt_j_residual = self.compat == "neox" and config.get("neox_gpt_j_residual", True)
         self.use_combined_qkv = config.get("combined_qkv", self.compat == "neox")
+        self.early_all_reduce = self.compat == "neox" and not self.neox_gpt_j_residual
 
         assert dim % heads == 0
         assert heads % shards == 0
@@ -372,14 +417,16 @@ class TransformerLayerShard(hk.Module):
             self.v = hk.Linear(self.dim_per_shard, with_bias=self.compat in ("fairseq_lm", "neox"), name="linear_1")
             self.k = hk.Linear(self.dim_per_shard, with_bias=self.compat in ("fairseq_lm", "neox"), name="linear_2")
 
-        self.o = hk.Linear(self.dim, with_bias=self.compat in ("neo", "fairseq_lm", "neox"),
-                           w_init=hk.initializers.TruncatedNormal(stddev=init_scale / np.sqrt(self.dim)),
-                           name="linear_3")
+        self.o = AllReduceLinear(self.dim, with_bias=self.compat in ("neo", "fairseq_lm", "neox"),
+                                 w_init=hk.initializers.TruncatedNormal(stddev=init_scale / np.sqrt(self.dim)),
+                                 name="linear_3",
+                                 all_reduce=self.early_all_reduce, shards=shards)
 
         self.dense_proj = hk.Linear(self.dim_per_shard * 4, name="linear_4")
-        self.dense_proj_o = hk.Linear(self.dim,
-                                      w_init=hk.initializers.TruncatedNormal(stddev=init_scale / np.sqrt(self.dim)),
-                                      name="linear_5")
+        self.dense_proj_o = AllReduceLinear(self.dim,
+                                            w_init=hk.initializers.TruncatedNormal(stddev=init_scale / np.sqrt(self.dim)),
+                                            name="linear_5",
+                                            all_reduce=self.early_all_reduce, shards=shards)
 
     def self_attn(self, q, v, k, attn_bias):
         if self.is_rotary:
@@ -431,7 +478,9 @@ class TransformerLayerShard(hk.Module):
     def neo_ff(self, x):
         x = self.norm_2(x)
         dense_out = self.ff(x)
-        return g_psum(dense_out)
+        if not self.early_all_reduce:
+            dense_out = g_psum(dense_out)
+        return dense_out
 
     def __call__(self, x, attn_bias):
         x = f_psum(x)
@@ -459,7 +508,9 @@ class TransformerLayerShard(hk.Module):
             dense_out = self.ff(x)
             out = attn_out + dense_out
 
-        return g_psum(out)
+        if not self.early_all_reduce:
+            out = g_psum(out)
+        return out
 
     # iterate the decoding process by a single token
     def decode_once(self, decode_state, x, attn_bias):
@@ -498,7 +549,9 @@ class TransformerLayerShard(hk.Module):
             dense_out = self.ff(x)
             out = attn_out + dense_out
 
-        return g_psum(out), {
+        if not self.early_all_reduce:
+            out = g_psum(out)
+        return out, {
             "tokens_decoded": tokens_decoded,
             "k": k,
             "v": v
@@ -535,7 +588,9 @@ class TransformerLayerShard(hk.Module):
             dense_out = self.ff(x)
             out = attn_out + dense_out
 
-        return g_psum(out), {"k": k, "v": v, "tokens_decoded": given_length.astype(jnp.uint32)}
+        if not self.early_all_reduce:
+            out = g_psum(out)
+        return out, {"k": k, "v": v, "tokens_decoded": given_length.astype(jnp.uint32)}
 
 
 # This new class combines the input and output projection into one matmul for better efficiency

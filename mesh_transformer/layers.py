@@ -203,11 +203,13 @@ class TransposingLinear(hk.Module):
         return out
 
 
-def fixed_pos_embedding(x, seq_dim=0, shift=0):
+def fixed_pos_embedding(x, seq_dim=0, shift=0, neox=False):
     dim = x.shape[-1]
     inv_freq = 1. / (10000 ** (np.arange(0, dim, 2) / dim))
 
     sinusoid_inp = np.einsum('i , j -> i j', np.arange(shift, x.shape[seq_dim] + shift), inv_freq)
+    if neox:
+        sinusoid_inp = np.concatenate((sinusoid_inp, sinusoid_inp), axis=-1)
 
     return np.sin(sinusoid_inp), np.cos(sinusoid_inp)
 
@@ -221,9 +223,16 @@ def rotate_every_two(x):
     return x.reshape(*x.shape[:-2], -1)
 
 
-def apply_rotary_pos_emb(x, sincos):
-    sin, cos = map(lambda t: t.repeat(2, axis=-1)[-x.shape[0]:, None, :], sincos)
-    return (x * cos) + (rotate_every_two(x) * sin)
+def rotate_half(x):
+    x1 = x[..., :x.shape[-1]//2]
+    x2 = x[..., x.shape[-1]//2:]
+    
+    return jnp.concatenate((-x2, x1), axis=-1)
+
+
+def apply_rotary_pos_emb(x, sincos, neox=False):
+    sin, cos = map(lambda t: (t if neox else t.repeat(2, axis=-1))[-x.shape[0]:, None, :], sincos)
+    return (x * cos) + ((rotate_half if neox else rotate_every_two)(x) * sin)
 
 
 def rotate_every_two_v2(x):
@@ -332,7 +341,8 @@ class TransformerLayerShard(hk.Module):
         dim = config["d_model"]
         shards = config["cores_per_replica"]
         norm = getnorm(config["norm"])
-        self.is_rotary = config["pe"] == "rotary"
+        self.is_rotary = config["pe"] in ("rotary", "neox_rotary")
+        self.is_neox_rotary = config["pe"] == "neox_rotary"
         self.attention_type = attention_type
         self.local_attention_window = config.get("local_attention_window", 256)
         self.compat = config.get("compat", "j")
@@ -379,9 +389,9 @@ class TransformerLayerShard(hk.Module):
             q_rot = q[:, :, :self.pe_rotary_dims]
             q_pass = q[:, :, self.pe_rotary_dims:]
 
-            sincos = fixed_pos_embedding(k_rot, shift=self.pe_shift)
-            q_rot = apply_rotary_pos_emb(q_rot, sincos)
-            k_rot = apply_rotary_pos_emb(k_rot, sincos)
+            sincos = fixed_pos_embedding(k_rot, shift=self.pe_shift, neox=self.is_neox_rotary)
+            q_rot = apply_rotary_pos_emb(q_rot, sincos, neox=self.is_neox_rotary)
+            k_rot = apply_rotary_pos_emb(k_rot, sincos, neox=self.is_neox_rotary)
 
             k = jnp.concatenate([k_rot, k_pass], axis=-1)
             q = jnp.concatenate([q_rot, q_pass], axis=-1)

@@ -131,13 +131,12 @@ def reshard(x, old_shape):
     return out
 
 
-move_xmap = jax.experimental.maps.xmap(fun=lambda x, _: to_bf16(x),
+def read_ckpt(pytree, dir, shards_in, shards_out=None, load_opt=True):
+    move_xmap = jax.experimental.maps.xmap(fun=lambda x, _: to_bf16(x),
                                        in_axes=(["shard", ...], ["batch", ...]),
                                        out_axes=["shard", ...],
                                        axis_resources={'shard': 'mp', 'batch': 'dp'})
 
-
-def read_ckpt(pytree, dir, shards_in, shards_out=None, load_opt=True):
     if shards_out is None:
         shards_out = shards_in
 

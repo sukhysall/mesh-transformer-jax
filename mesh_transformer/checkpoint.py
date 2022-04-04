@@ -8,7 +8,6 @@ import jax.numpy as jnp
 import numpy as np
 import multiprocessing
 
-import ray
 from smart_open import open
 
 from mesh_transformer.util import head_print, to_bf16
@@ -278,6 +277,8 @@ def write_ckpt_v2(model_state, dir):
 
 
 def read_sharded_v2(state, dir, checkpoint_hosts, state_shard):
+    import ray
+
     files_per_host = checkpoint_hosts // jax.host_count()
 
     assert files_per_host >= 1, "can't restore model to larger pod than was trained on (yet)"

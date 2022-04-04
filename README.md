@@ -24,6 +24,7 @@ output = network.generate(batched_tokens, length, gen_len, {"top_p": np.ones(tot
 
 Inherited from **main**:
 
+* __(/mesh_transformer/checkpoint.py)__ If `smart_open` is not found, we will use Python's builtin `open` instead.
 * __(/mesh_transformer/checkpoint.py)__ Ray is now imported when you call `read_sharded_v2()` (the only function in the file that uses Ray) so that you don't need to have Ray installed if you don't use the function.
 * __(/mesh_transformer/transformer_shard.py)__ `CausalTransformer` now accepts `dematerialized` keyword argument, which defaults to `False` and can be set to `True` to attempt to predict the structure of the model parameter dictionary without using JAX.
 * __(/mesh_transformer/layers.py)__ All einops calls have been replaced with equivalent JAX calls, removing the need for the Python package einops.

@@ -8,7 +8,10 @@ import jax.numpy as jnp
 import numpy as np
 import multiprocessing
 
-from smart_open import open
+try:
+    from smart_open import open
+except ImportError:
+    pass
 
 from mesh_transformer.util import head_print
 

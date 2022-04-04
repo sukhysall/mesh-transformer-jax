@@ -3,6 +3,7 @@ This branch contains some basic baseline patches that are in all other branches 
 You may be looking for the **all** branch, which contains many extra features.
 
 ## Patches in this branch:
+* __(/mesh_transformer/checkpoint.py)__ Ray is now imported when you call `read_sharded_v2()` (the only function in the file that uses Ray) so that you don't need to have Ray installed if you don't use the function.
 * __(/mesh_transformer/transformer_shard.py)__ `CausalTransformer` now accepts `dematerialized` keyword argument, which defaults to `False` and can be set to `True` to attempt to predict the structure of the model parameter dictionary without using JAX.
 * __(/mesh_transformer/layers.py)__ All einops calls have been replaced with equivalent JAX calls, removing the need for the Python package einops.
 * __(/requirements.txt)__ No longer requires einops.

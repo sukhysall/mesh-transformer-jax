@@ -3,7 +3,6 @@ tqdm
 requests
 optax==0.0.9
 dm-haiku==0.0.5
-ray[default]
 jax==0.2.12
 transformers
 progressbar2

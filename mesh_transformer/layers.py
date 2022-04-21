@@ -797,14 +797,14 @@ class ProjectionShard(hk.Module):
 
         self.norm = norm
 
-        if self.compat == "neo":
+        if self.compat in ("neo", "fairseq_lm"):
             self.proj = embedding_shard.proj
         else:
             self.proj = TransposingLinear(config["d_model"], self.dim_per_shard, with_bias=self.compat not in ("neo", "fairseq_lm", "neox"))
 
     def __call__(self, x):
         x = self.norm(x)
-        proj = self.proj(x, transpose_weights=self.compat == "neo")
+        proj = self.proj(x, transpose_weights=self.compat in ("neo", "fairseq_lm"))
 
         all_proj = jax.lax.all_gather(proj, 'shard')
 
@@ -813,7 +813,7 @@ class ProjectionShard(hk.Module):
     def loss(self, x, targets, z_loss=1):
         x = f_psum(x)
         x = self.norm(x)
-        logits = self.proj(x, transpose_weights=self.compat == "neo")
+        logits = self.proj(x, transpose_weights=self.compat in ("neo", "fairseq_lm"))
 
         shard_start_index = jax.lax.axis_index('shard') * self.dim_per_shard
 

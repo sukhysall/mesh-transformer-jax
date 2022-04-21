@@ -103,7 +103,7 @@ def compute_placeholder_params(config: dict):
                 scale=PlaceholderTensor(shards, out_dim),
             )
 
-    if compat != "neo":
+    if compat not in ("neo", "fairseq_lm"):
         params["causal_transformer_shard/~/projection_shard/~/linear"] = _create_dict(  # proj
             w=PlaceholderTensor(shards, out_dim, in_dim_per_shard),
             b=PlaceholderTensor(shards, in_dim_per_shard) if compat == "j" else None,

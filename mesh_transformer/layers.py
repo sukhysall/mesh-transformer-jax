@@ -416,7 +416,7 @@ class TransformerLayerShard(hk.Module):
         self.dim_per_head = dim // heads
         self.heads_per_shard = heads // shards
         self.dim_per_shard = dim // shards
-        self.pe_rotary_dims = config.get("pe_rotary_dims", self.dim_per_head)
+        self.pe_rotary_dims = int(config["pe_rotary_pct"] * self.dim_per_head) if "pe_rotary_pct" in config and 0 <= config["pe_rotary_pct"] <= 1 else config.get("pe_rotary_dims", self.dim_per_head)
 
         self.norm = norm
         if self.compat in ("neo", "fairseq_lm", "neox"):

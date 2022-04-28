@@ -33,6 +33,7 @@ Inherited from **modelcompat**:
         * The second group of `d_model // n_heads` columns of the query weight and the second group of `d_model // n_heads` elements of the query bias correspond to the fourth group of `d_model // n_heads` columns of the strided QKV weight and the fourth group of `d_model // n_heads` elements of the strided QKV bias.
         * etc.
     * `neox_gpt_j_residual`: If `compat` is `"neox"`, this corresponds to the `gpt_j_residual` config option of GPT-NeoX models and defaults to `True`. If `compat` is set to anything else, this has no effect.
+    * `pe_rotary_pct`: A floating point value. If set to a value greater than or equal to 0 and less than or equal to 1, we will ignore the value of `pe_rotary_dims` if it is set and instead use `math.floor(pe_rotary_pct * (d_model // n_heads))` as the value for `pe_rotary_dims`. Defaults to being unset.
 * __(/mesh_transformer/layers.py)__ The implementation of standard positional embedding has been changed because the original implementation would've thrown an error. This does not affect GPT-J since it uses rotary positional embedding.
 
 Inherited from **lowmem-fastinstall**:

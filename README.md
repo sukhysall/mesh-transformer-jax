@@ -3,6 +3,7 @@ This branch contains some basic baseline patches that are in all other branches 
 You may be looking for the **all** branch, which contains many extra features.
 
 ## Patches in this branch:
+* __(/.gitattributes, /setup.cfg, /setup.py, /versioneer.py, /mesh_transformer/\_\_init.py\_\_, /mesh_transformer/\_version.py)__ python-versioneer is now used to automatically generate the version string.
 * __(/requirements.txt)__ A new requirement for `chex >= 0.0.7, < 0.1.3` has been added.
 * __(/mesh_transformer/checkpoint.py)__ If `smart_open` is not found, we will use Python's builtin `open` instead.
 * __(/mesh_transformer/checkpoint.py)__ Ray is now imported when you call `read_sharded_v2()` (the only function in the file that uses Ray) so that you don't need to have Ray installed if you don't use the function.

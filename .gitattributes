@@ -1,1 +1,2 @@
-mesh_transformer/_version.py export-subst
+mesh_transformer/_version.py export-subst linguist-vendored
+versioneer.py linguist-vendored

@@ -44,7 +44,7 @@ def compute_placeholder_params(config: dict):
     pe = config["pe"]
     use_combined_qkv = config.get("combined_qkv", compat == "neox")
 
-    if compat not in ("j", "neo", "fairseq_lm", "neox"):
+    if compat not in ("j", "neo", "fairseq_lm", "neox", "opt"):
         raise NotImplementedError(f"Unsupported model type {repr(compat)}")
     if pe not in ("rotary", "neox_rotary", "fixed", "sinusoidal", "fairseq_sinusoidal"):
         raise NotImplementedError(f"Unsupported positional embedding type {repr(pe)}")
@@ -73,17 +73,17 @@ def compute_placeholder_params(config: dict):
         if use_combined_qkv:
             params[header + "combined_qkv"] = _create_dict(  # qkv
                 w=PlaceholderTensor(shards, out_dim, out_dim_per_shard * 3),
-                b=PlaceholderTensor(shards, out_dim_per_shard * 3) if compat in ("fairseq_lm", "neox") else None,
+                b=PlaceholderTensor(shards, out_dim_per_shard * 3) if compat in ("fairseq_lm", "neox", "opt") else None,
             )
         else:
             for footer in ("linear", "linear_1", "linear_2"):  # q, v, k
                 params[header + footer] = _create_dict(
                     w=PlaceholderTensor(shards, out_dim, out_dim_per_shard),
-                    b=PlaceholderTensor(shards, out_dim_per_shard) if compat in ("fairseq_lm", "neox") else None,
+                    b=PlaceholderTensor(shards, out_dim_per_shard) if compat in ("fairseq_lm", "neox", "opt") else None,
                 )
         params[header + "linear_3"] = _create_dict(  # o
             w=PlaceholderTensor(shards, out_dim_per_shard, out_dim),
-            b=PlaceholderTensor(shards, out_dim) if compat in ("neo", "fairseq_lm", "neox") else None,
+            b=PlaceholderTensor(shards, out_dim) if compat in ("neo", "fairseq_lm", "neox", "opt") else None,
         )
         params[header + "linear_4"] = _create_dict(  # dense_proj
             w=PlaceholderTensor(shards, out_dim, ffn_dim_per_shard),
@@ -97,21 +97,22 @@ def compute_placeholder_params(config: dict):
             offset=PlaceholderTensor(shards, out_dim),
             scale=PlaceholderTensor(shards, out_dim),
         )
-        if compat in ("neo", "fairseq_lm", "neox"):
+        if compat in ("neo", "fairseq_lm", "neox", "opt"):
             params[header + "replicated_layer_norm_1"] = _create_dict(  # norm_2
                 offset=PlaceholderTensor(shards, out_dim),
                 scale=PlaceholderTensor(shards, out_dim),
             )
 
-    if compat not in ("neo", "fairseq_lm"):
+    if compat not in ("neo", "fairseq_lm", "opt"):
         params["causal_transformer_shard/~/projection_shard/~/linear"] = _create_dict(  # proj
             w=PlaceholderTensor(shards, out_dim, in_dim_per_shard),
             b=PlaceholderTensor(shards, in_dim_per_shard) if compat == "j" else None,
         )
-    params["causal_transformer_shard/~/projection_shard/~/replicated_layer_norm"] = _create_dict(  # norm
-        offset=PlaceholderTensor(shards, out_dim),
-        scale=PlaceholderTensor(shards, out_dim),
-    )
+    if compat != "opt":
+        params["causal_transformer_shard/~/projection_shard/~/replicated_layer_norm"] = _create_dict(  # norm
+            offset=PlaceholderTensor(shards, out_dim),
+            scale=PlaceholderTensor(shards, out_dim),
+        )
 
     return params
 
@@ -159,8 +160,12 @@ class CausalTransformerShard(hk.Module):
 
         for l in self.transformer_layers:
             x = x + hk.remat(l)(x, attn_bias)
-            if not l.neox_gpt_j_residual and l.compat in ("neo", "fairseq_lm", "neox"):
+            if not l.do_layer_norm_before:
+                x = hk.remat(l.norm)(x)
+            if not l.neox_gpt_j_residual and l.compat in ("neo", "fairseq_lm", "neox", "opt"):
                 x = x + hk.remat(l.neo_ff)(x)
+                if not l.do_layer_norm_before:
+                    x = hk.remat(l.norm_2)(x)
 
         return hk.remat(self.proj.loss)(x, target, z_loss)
 
@@ -194,8 +199,12 @@ class CausalTransformerShard(hk.Module):
         for l in self.transformer_layers:
             res, layer_state = l.get_init_decode_state(x, length - 1, attn_bias)
             x = x + res
-            if not l.neox_gpt_j_residual and l.compat in ("neo", "fairseq_lm", "neox"):
+            if not l.do_layer_norm_before:
+                x = l.norm(x)
+            if not l.neox_gpt_j_residual and l.compat in ("neo", "fairseq_lm", "neox", "opt"):
                 x = x + l.neo_ff(x)
+                if not l.do_layer_norm_before:
+                    x = l.norm_2(x)
             states.append(layer_state)
 
         return self.proj(x), (last.astype(jnp.uint32), states, hk.next_rng_key())
@@ -216,8 +225,12 @@ class CausalTransformerShard(hk.Module):
         for l, s in zip(self.transformer_layers, state):
             res, layer_state = l.decode_once(s, x, attn_bias)
             x = x + res
-            if not l.neox_gpt_j_residual and l.compat in ("neo", "fairseq_lm", "neox"):
+            if not l.do_layer_norm_before:
+                x = l.norm(x)
+            if not l.neox_gpt_j_residual and l.compat in ("neo", "fairseq_lm", "neox", "opt"):
                 x = x + l.neo_ff(x)
+                if not l.do_layer_norm_before:
+                    x = l.norm_2(x)
             new_states.append(layer_state)
 
         return self.proj(x), new_states

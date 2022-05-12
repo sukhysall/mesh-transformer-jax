@@ -114,6 +114,8 @@ def getactfn(type):
         return lambda x: jax.nn.gelu(x, approximate=True)
     elif type == "gelu":
         return lambda x: jax.nn.gelu(x, approximate=False)
+    elif type == "relu":
+        return jax.nn.relu
     else:
         raise Exception("Not implemented")
 
@@ -325,7 +327,7 @@ class EmbeddingShard(hk.Module):
         else:
             self.positional_embeddings = None
 
-        self.proj = TransposingLinear(self.in_dim_per_shard, self.out_dim, w_init=hk.initializers.TruncatedNormal(stddev=1 / np.sqrt(in_dim)), with_bias=self.compat not in ("neo", "fairseq_lm", "neox"))
+        self.proj = TransposingLinear(self.in_dim_per_shard, self.out_dim, w_init=hk.initializers.TruncatedNormal(stddev=1 / np.sqrt(in_dim)), with_bias=self.compat not in ("neo", "fairseq_lm", "neox", "opt"))
 
     def __call__(self, x, dtype=jnp.bfloat16, pe_length=0):
         pe_length = jnp.int32(pe_length)
@@ -391,10 +393,11 @@ class TransformerLayerShard(hk.Module):
         self.local_attention_window = config.get("local_attention_window", 256)
         self.compat = config.get("compat", "j")
         self.pe_shift = config.get("pe_shift", 2 if self.compat in ("fairseq_lm",) else 0)
-        self.activation_fn = getactfn(config.get("activation", "gelu" if self.compat in ("fairseq_lm",) else "gelu_new"))
+        self.activation_fn = getactfn(config.get("activation", "relu" if self.compat in ("opt",) else "gelu" if self.compat in ("fairseq_lm",) else "gelu_new"))
         self.neox_gpt_j_residual = self.compat == "neox" and config.get("neox_gpt_j_residual", True)
         self.use_combined_qkv = config.get("combined_qkv", self.compat == "neox")
         self.early_all_reduce = self.compat == "neox" and not self.neox_gpt_j_residual
+        self.do_layer_norm_before = config.get("do_layer_norm_before", True)
 
         assert dim % heads == 0
         assert heads % shards == 0
@@ -407,17 +410,17 @@ class TransformerLayerShard(hk.Module):
         self.pe_rotary_dims = int(config["pe_rotary_pct"] * self.dim_per_head) if "pe_rotary_pct" in config and 0 <= config["pe_rotary_pct"] <= 1 else config.get("pe_rotary_dims", self.dim_per_head)
 
         self.norm = norm
-        if self.compat in ("neo", "fairseq_lm", "neox"):
+        if self.compat in ("neo", "fairseq_lm", "neox", "opt"):
             self.norm_2 = getnorm(config["norm"])
 
         if self.use_combined_qkv:
-            self.qkv = hk.Linear(self.dim_per_shard * 3, with_bias=self.compat in ("fairseq_lm", "neox"), name="combined_qkv")
+            self.qkv = hk.Linear(self.dim_per_shard * 3, with_bias=self.compat in ("fairseq_lm", "neox", "opt"), name="combined_qkv")
         else:
-            self.q = hk.Linear(self.dim_per_shard, with_bias=self.compat in ("fairseq_lm", "neox"), name="linear")
-            self.v = hk.Linear(self.dim_per_shard, with_bias=self.compat in ("fairseq_lm", "neox"), name="linear_1")
-            self.k = hk.Linear(self.dim_per_shard, with_bias=self.compat in ("fairseq_lm", "neox"), name="linear_2")
+            self.q = hk.Linear(self.dim_per_shard, with_bias=self.compat in ("fairseq_lm", "neox", "opt"), name="linear")
+            self.v = hk.Linear(self.dim_per_shard, with_bias=self.compat in ("fairseq_lm", "neox", "opt"), name="linear_1")
+            self.k = hk.Linear(self.dim_per_shard, with_bias=self.compat in ("fairseq_lm", "neox", "opt"), name="linear_2")
 
-        self.o = AllReduceLinear(self.dim, with_bias=self.compat in ("neo", "fairseq_lm", "neox"),
+        self.o = AllReduceLinear(self.dim, with_bias=self.compat in ("neo", "fairseq_lm", "neox", "opt"),
                                  w_init=hk.initializers.TruncatedNormal(stddev=init_scale / np.sqrt(self.dim)),
                                  name="linear_3",
                                  all_reduce=self.early_all_reduce, shards=shards)
@@ -445,7 +448,7 @@ class TransformerLayerShard(hk.Module):
 
         attention_logits = jnp.einsum("thd,Thd->htT", q, k)
 
-        if self.compat not in ("neo", "fairseq_lm"):
+        if self.compat not in ("neo", "fairseq_lm", "opt"):
             sqrt_key_size = np.sqrt(self.dim_per_head).astype(k.dtype)
             attention_logits = attention_logits / sqrt_key_size
 
@@ -470,13 +473,14 @@ class TransformerLayerShard(hk.Module):
             v = self.v(x).reshape(x.shape[:-1] + (self.heads_per_shard, self.dim_per_head))
             k = self.k(x).reshape(x.shape[:-1] + (self.heads_per_shard, self.dim_per_head))
 
-        if self.compat in ("fairseq_lm",):
+        if self.compat in ("fairseq_lm", "opt"):
             q /= jnp.sqrt(self.dim_per_head).astype(q.dtype)
 
         return q, v, k
 
     def neo_ff(self, x):
-        x = self.norm_2(x)
+        if self.do_layer_norm_before:
+            x = self.norm_2(x)
         dense_out = self.ff(x)
         if not self.early_all_reduce:
             dense_out = g_psum(dense_out)
@@ -485,7 +489,8 @@ class TransformerLayerShard(hk.Module):
     def __call__(self, x, attn_bias):
         x = f_psum(x)
         x_original = x
-        x = self.norm(x)
+        if self.do_layer_norm_before:
+            x = self.norm(x)
 
         q, v, k = self.qvk_proj(x)
 
@@ -498,10 +503,12 @@ class TransformerLayerShard(hk.Module):
         bias += attn_bias
 
         attn_out = self.self_attn(q, v, k, bias)
-        if not self.neox_gpt_j_residual and self.compat in ("neo", "fairseq_lm", "neox"):
+        if not self.neox_gpt_j_residual and self.compat in ("neo", "fairseq_lm", "neox", "opt"):
             out = attn_out
         elif self.neox_gpt_j_residual:
-            x2 = self.norm_2(x_original)
+            x2 = x_original
+            if self.do_layer_norm_before:
+                x2 = self.norm_2(x2)
             dense_out = self.ff(x2)
             out = attn_out + dense_out
         else:
@@ -516,7 +523,8 @@ class TransformerLayerShard(hk.Module):
     def decode_once(self, decode_state, x, attn_bias):
         x = f_psum(x)
         x_original = x
-        x = self.norm(x)
+        if self.do_layer_norm_before:
+            x = self.norm(x)
 
         assert x.shape[0] == 1
 
@@ -539,10 +547,12 @@ class TransformerLayerShard(hk.Module):
         bias += attn_bias
 
         attn_out = self.self_attn(q, v, k, bias)
-        if not self.neox_gpt_j_residual and self.compat in ("neo", "fairseq_lm", "neox"):
+        if not self.neox_gpt_j_residual and self.compat in ("neo", "fairseq_lm", "neox", "opt"):
             out = attn_out
         elif self.neox_gpt_j_residual:
-            x2 = self.norm_2(x_original)
+            x2 = x_original
+            if self.do_layer_norm_before:
+                x2 = self.norm_2(x2)
             dense_out = self.ff(x2)
             out = attn_out + dense_out
         else:
@@ -561,7 +571,8 @@ class TransformerLayerShard(hk.Module):
     def get_init_decode_state(self, x, given_length, attn_bias):
         x = f_psum(x)
         x_original = x
-        x = self.norm(x)
+        if self.do_layer_norm_before:
+            x = self.norm(x)
 
         q, v, k = self.qvk_proj(x)
 
@@ -578,10 +589,12 @@ class TransformerLayerShard(hk.Module):
         bias += attn_bias  # finally add attn bias for rpe
 
         attn_out = self.self_attn(q, v, k, bias)
-        if not self.neox_gpt_j_residual and self.compat in ("neo", "fairseq_lm", "neox"):
+        if not self.neox_gpt_j_residual and self.compat in ("neo", "fairseq_lm", "neox", "opt"):
             out = attn_out
         elif self.neox_gpt_j_residual:
-            x2 = self.norm_2(x_original)
+            x2 = x_original
+            if self.do_layer_norm_before:
+                x2 = self.norm_2(x2)
             dense_out = self.ff(x2)
             out = attn_out + dense_out
         else:
@@ -775,24 +788,27 @@ class ProjectionShard(hk.Module):
         self.out_dim_unpadded = config["n_vocab"]
         out_dim = self.out_dim_unpadded + config.get("n_vocab_padding", 0)
         shards = config["cores_per_replica"]
-        norm = getnorm(config["norm"])
         self.compat = config.get("compat", "j")
+        if self.compat != "opt":
+            norm = getnorm(config["norm"])
 
         assert out_dim % shards == 0
 
         self.dim = out_dim
         self.dim_per_shard = out_dim // shards
 
-        self.norm = norm
+        if self.compat != "opt":
+            self.norm = norm
 
-        if self.compat in ("neo", "fairseq_lm"):
+        if self.compat in ("neo", "fairseq_lm", "opt"):
             self.proj = embedding_shard.proj
         else:
-            self.proj = TransposingLinear(config["d_model"], self.dim_per_shard, with_bias=self.compat not in ("neo", "fairseq_lm", "neox"))
+            self.proj = TransposingLinear(config["d_model"], self.dim_per_shard, with_bias=self.compat not in ("neo", "fairseq_lm", "neox", "opt"))
 
     def __call__(self, x):
-        x = self.norm(x)
-        proj = self.proj(x, transpose_weights=self.compat in ("neo", "fairseq_lm"))
+        if self.compat != "opt":
+            x = self.norm(x)
+        proj = self.proj(x, transpose_weights=self.compat in ("neo", "fairseq_lm", "opt"))
 
         all_proj = jax.lax.all_gather(proj, 'shard')
 
@@ -800,8 +816,9 @@ class ProjectionShard(hk.Module):
 
     def loss(self, x, targets, z_loss=1):
         x = f_psum(x)
-        x = self.norm(x)
-        logits = self.proj(x, transpose_weights=self.compat in ("neo", "fairseq_lm"))
+        if self.compat != "opt":
+            x = self.norm(x)
+        logits = self.proj(x, transpose_weights=self.compat in ("neo", "fairseq_lm", "opt"))
 
         shard_start_index = jax.lax.axis_index('shard') * self.dim_per_shard
 

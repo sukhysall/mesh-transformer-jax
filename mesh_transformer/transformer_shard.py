@@ -53,19 +53,21 @@ def compute_placeholder_params(config: dict):
     seq = config["seq"]
     in_dim = config["n_vocab"] + config.get("n_vocab_padding", 0)
     out_dim = config["d_model"]
+    d_embed = config.get("d_embed", out_dim)
     shards = config["cores_per_replica"]
     in_dim_per_shard = in_dim // shards
     out_dim_per_shard = out_dim // shards
     ffn_dim_per_shard = out_dim_per_shard * 4
 
-    if config["pe"] == "fixed":
-        params["causal_transformer_shard/~/embedding_shard"] = _create_dict(  # positional_embeddings
-            pos_embs=PlaceholderTensor(shards, seq, out_dim_per_shard),
+    if config["pe"] == "fixed" or d_embed != out_dim:
+        params["causal_transformer_shard/~/embedding_shard"] = _create_dict(
+            pos_embs=PlaceholderTensor(shards, seq, out_dim_per_shard) if config["pe"] == "fixed" else None,  # positional_embeddings
+            project_in=PlaceholderTensor(shards, d_embed, out_dim_per_shard) if d_embed != out_dim else None,
         )
 
     params["causal_transformer_shard/~/embedding_shard/~/linear"] = _create_dict(  # proj
-        w=PlaceholderTensor(shards, in_dim_per_shard, out_dim),
-        b=PlaceholderTensor(shards, out_dim) if compat == "j" else None,
+        w=PlaceholderTensor(shards, in_dim_per_shard, d_embed),
+        b=PlaceholderTensor(shards, d_embed) if compat == "j" else None,
     )
 
     for layer in range(config["layers"]):
@@ -103,9 +105,13 @@ def compute_placeholder_params(config: dict):
                 scale=PlaceholderTensor(shards, out_dim),
             )
 
+    if d_embed != out_dim:
+        params["causal_transformer_shard/~/projection_shard"] = _create_dict(
+            project_out=PlaceholderTensor(shards, out_dim, d_embed // shards)
+        )
     if compat not in ("neo", "fairseq_lm", "opt"):
         params["causal_transformer_shard/~/projection_shard/~/linear"] = _create_dict(  # proj
-            w=PlaceholderTensor(shards, out_dim, in_dim_per_shard),
+            w=PlaceholderTensor(shards, d_embed, in_dim_per_shard),
             b=PlaceholderTensor(shards, in_dim_per_shard) if compat == "j" else None,
         )
     if compat != "opt":

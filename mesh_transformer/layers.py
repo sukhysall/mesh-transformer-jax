@@ -313,6 +313,8 @@ class EmbeddingShard(hk.Module):
         self.post_embed = config["pe"] in ("fairseq_sinusoidal", "sinusoidal")
         self.has_sqrt_embed_scale = self.compat in ("fairseq_lm",)
 
+        self.d_embed = config.get("d_embed", self.out_dim)
+
         if config["pe"] == "fixed":
             embed_init = hk.initializers.TruncatedNormal(stddev=0.02)
             self.positional_embeddings = hk.get_parameter('pos_embs', [config["seq"], self.out_dim_per_shard], init=embed_init)
@@ -327,7 +329,12 @@ class EmbeddingShard(hk.Module):
         else:
             self.positional_embeddings = None
 
-        self.proj = TransposingLinear(self.in_dim_per_shard, self.out_dim, w_init=hk.initializers.TruncatedNormal(stddev=1 / np.sqrt(in_dim)), with_bias=self.compat not in ("neo", "fairseq_lm", "neox", "opt"))
+        self.proj = TransposingLinear(self.in_dim_per_shard, self.d_embed, w_init=hk.initializers.TruncatedNormal(stddev=1 / np.sqrt(in_dim)), with_bias=self.compat not in ("neo", "fairseq_lm", "neox", "opt"))
+
+        if self.d_embed != self.out_dim:
+            self.project_in = jax.lax.all_gather(hk.get_parameter("project_in", [self.d_embed, self.out_dim_per_shard], init=hk.initializers.TruncatedNormal(stddev=1 / np.sqrt(self.d_embed))), "shard", axis=-1, tiled=True)
+        else:
+            self.project_in = None
 
     def __call__(self, x, dtype=jnp.bfloat16, pe_length=0):
         pe_length = jnp.int32(pe_length)
@@ -338,6 +345,9 @@ class EmbeddingShard(hk.Module):
 
         if self.has_sqrt_embed_scale:
             proj_out *= jnp.sqrt(self.out_dim).astype(proj_out.dtype)
+
+        if self.project_in is not None:
+            proj_out @= self.project_in
 
         if not self.post_embed and self.positional_embeddings is not None:
             shard_roll_index = jnp.int32(jax.lax.axis_index('shard') * self.out_dim_per_shard)
@@ -794,20 +804,31 @@ class ProjectionShard(hk.Module):
 
         assert out_dim % shards == 0
 
+        self.in_dim = config["d_model"]
         self.dim = out_dim
         self.dim_per_shard = out_dim // shards
 
         if self.compat != "opt":
             self.norm = norm
 
+        self.d_embed = config.get("d_embed", self.in_dim)
+        assert self.d_embed % shards == 0
+
         if self.compat in ("neo", "fairseq_lm", "opt"):
             self.proj = embedding_shard.proj
         else:
             self.proj = TransposingLinear(config["d_model"], self.dim_per_shard, with_bias=self.compat not in ("neo", "fairseq_lm", "neox", "opt"))
 
+        if self.d_embed != self.in_dim:
+            self.project_out = jax.lax.all_gather(hk.get_parameter("project_out", [self.in_dim, self.d_embed // shards], init=hk.initializers.TruncatedNormal(stddev=1 / np.sqrt(self.in_dim))), "shard", axis=-1, tiled=True)
+        else:
+            self.project_out = None
+
     def __call__(self, x):
         if self.compat != "opt":
             x = self.norm(x)
+        if self.project_out is not None:
+            x @= self.project_out
         proj = self.proj(x, transpose_weights=self.compat in ("neo", "fairseq_lm", "opt"))
 
         all_proj = jax.lax.all_gather(proj, 'shard')

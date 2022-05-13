@@ -194,7 +194,7 @@ class EmbeddingShard(hk.Module):
 
         if soft_embeddings is not None:
             assert soft_embeddings.ndim == 2
-            assert soft_embeddings.shape[1] == self.out_dim
+            assert soft_embeddings.shape[1] == getattr(self, "d_embed", self.out_dim)
 
             soft_shard_start_index = self.in_dim + jax.lax.axis_index('shard') * soft_embeddings.shape[0]
 

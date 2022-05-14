@@ -110,12 +110,28 @@ def getnorm(type):
         raise Exception("Not implemented")
 
 def getactfn(type):
-    if type == "gelu_new":
+    if type in ("gelu_new", "gelu_python"):  # tanh approximation of GELU from https://arxiv.org/pdf/1606.08415.pdf section 2
         return lambda x: jax.nn.gelu(x, approximate=True)
-    elif type == "gelu":
+    elif type == "gelu":  # error function formula for GELU from https://arxiv.org/pdf/1606.08415.pdf section 2
         return lambda x: jax.nn.gelu(x, approximate=False)
+    elif type == "quick_gelu":  # sigmoid approximation of GELU from https://arxiv.org/pdf/1606.08415.pdf section 2
+        return lambda x: x * jax.nn.sigmoid(1.702 * x)
+    elif type == "gelu_fast":  # another approximation of GELU proposed by the authors of the same paper
+        return lambda x: x * 0.5 * (1.0 + jnp.tanh(0.79788456 * x * (1 + 0.044715 * x * x)))
+    elif type == "gelu_10":
+        return lambda x: jnp.clip(jax.nn.gelu(x, approximate=True), min=-10, max=10)
+    elif type == "mish":
+        return lambda x: x * jnp.tanh(jax.nn.softplus(x))
+    elif type in ("silu", "swish"):
+        return jax.nn.silu
     elif type == "relu":
         return jax.nn.relu
+    elif type == "sigmoid":
+        return jax.nn.sigmoid
+    elif type == "tanh":
+        return jnp.tanh
+    elif type == "linear":
+        return lambda x: x
     else:
         raise Exception("Not implemented")
 
@@ -403,7 +419,7 @@ class TransformerLayerShard(hk.Module):
         self.local_attention_window = config.get("local_attention_window", 256)
         self.compat = config.get("compat", "j")
         self.pe_shift = config.get("pe_shift", 2 if self.compat in ("fairseq_lm",) else 0)
-        self.activation_fn = getactfn(config.get("activation", "relu" if self.compat in ("opt",) else "gelu" if self.compat in ("fairseq_lm",) else "gelu_new"))
+        self.activation_fn = getactfn(config.get("activation", "relu" if self.compat in ("opt",) else "gelu" if self.compat in ("fairseq_lm",) else "gelu_fast" if self.compat in ("neox",) else "gelu_new"))
         self.neox_gpt_j_residual = self.compat == "neox" and config.get("neox_gpt_j_residual", True)
         self.use_combined_qkv = config.get("combined_qkv", self.compat == "neox")
         self.early_all_reduce = self.compat == "neox" and not self.neox_gpt_j_residual

@@ -34,7 +34,11 @@ params = {
     * `local_attention_window`: A positive integer that specifies the window size for layers with local attention. Has no effect if all of your layers are global attention layers. Defaults to 256.
     * `n_vocab_padding`: A nonnegative integer, the amount of padding your input and output embeddings have. Defaults to 0.
     * `pe_shift`: A nonnegative integer -- what the first position ID should be when doing positional embedding. If `compat` is set to `"fairseq"`, this defaults to 2, otherwise 0.
-    * `activation`: A string describing which activation function to use -- `"gelu_new"` if you want to use the tanh approximation of the GELU function from section 2 of https://arxiv.org/abs/1606.08415 used in GPT-2, GPT-Neo and GPT-J, or `"gelu"` if you want to use the standard definition of GELU that uses the error function that is also defined in the same section of that paper, or `"relu"` to use the ReLU which is defined for all real numbers x as ReLU(x) = max{0, x}. If `compat` is set to `"opt"`, this defaults to `"relu"`. Otherwise if `compat` is set to `"fairseq"`, this defaults to `"gelu"`. Otherwise this defaults to `"gelu_new"`.
+    * `activation`: A string describing which activation function to use. Possible options are listed in https://github.com/huggingface/transformers/blob/main/src/transformers/activations.py. The default activation function depends on what `compat` is set to:
+        * `"fairseq_lm"`: `"gelu"`
+        * `"neox"`: `"gelu_fast"`
+        * `"opt"`: `"relu"`
+        * All other values: `"gelu_new"`
     * `combined_qkv`: A Boolean value. If set to `True`, uses GPT-NeoX-style strided QKV linear transformation with weight shape `(d_model, d_model * 3)` and bias shape `(d_model * 3,)` instead of three separate linear transformations each with weight shape `(d_model, d_model)` and bias shape `(d_model,)`. Defaults to `True` if compat is `"neox"`, otherwise `False`.
         * The first group of `d_model // n_heads` columns of the query weight and the first group of `d_model // n_heads` elements of the query bias correspond to the first group of `d_model // n_heads` columns of the strided QKV weight and the first group of `d_model // n_heads` elements of the strided QKV bias.
         * The first group of `d_model // n_heads` columns of the key weight and the first group of `d_model // n_heads` elements of the key bias correspond to the second group of `d_model // n_heads` columns of the strided QKV weight and the second group of `d_model // n_heads` elements of the strided QKV bias.

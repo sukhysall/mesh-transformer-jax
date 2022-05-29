@@ -518,6 +518,7 @@ class TransformerLayerShard(hk.Module):
 
     def neo_ff(self, x):
         if self.do_layer_norm_before:
+            x = f_psum(x)
             x = self.norm_2(x)
         dense_out = self.ff(x)
         if not self.early_all_reduce:
@@ -525,9 +526,9 @@ class TransformerLayerShard(hk.Module):
         return dense_out
 
     def __call__(self, x, attn_bias):
-        x = f_psum(x)
         x_original = x
         if self.do_layer_norm_before:
+            x = f_psum(x)
             x = self.norm(x)
 
         q, v, k = self.qvk_proj(x)
@@ -546,6 +547,7 @@ class TransformerLayerShard(hk.Module):
         elif self.neox_gpt_j_residual:
             x2 = x_original
             if self.do_layer_norm_before:
+                x2 = f_psum(x2)
                 x2 = self.norm_2(x2)
             dense_out = self.ff(x2)
             out = attn_out + dense_out
@@ -559,9 +561,9 @@ class TransformerLayerShard(hk.Module):
 
     # iterate the decoding process by a single token
     def decode_once(self, decode_state, x, attn_bias):
-        x = f_psum(x)
         x_original = x
         if self.do_layer_norm_before:
+            x = f_psum(x)
             x = self.norm(x)
 
         assert x.shape[0] == 1
@@ -590,6 +592,7 @@ class TransformerLayerShard(hk.Module):
         elif self.neox_gpt_j_residual:
             x2 = x_original
             if self.do_layer_norm_before:
+                x2 = f_psum(x2)
                 x2 = self.norm_2(x2)
             dense_out = self.ff(x2)
             out = attn_out + dense_out
@@ -607,9 +610,9 @@ class TransformerLayerShard(hk.Module):
 
     # take in right aligned context tokens and generate an initial state
     def get_init_decode_state(self, x, given_length, attn_bias):
-        x = f_psum(x)
         x_original = x
         if self.do_layer_norm_before:
+            x = f_psum(x)
             x = self.norm(x)
 
         q, v, k = self.qvk_proj(x)
@@ -632,6 +635,7 @@ class TransformerLayerShard(hk.Module):
         elif self.neox_gpt_j_residual:
             x2 = x_original
             if self.do_layer_norm_before:
+                x2 = f_psum(x2)
                 x2 = self.norm_2(x2)
             dense_out = self.ff(x2)
             out = attn_out + dense_out

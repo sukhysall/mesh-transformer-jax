@@ -15,7 +15,7 @@ from jax.experimental.pjit import pjit
 from mesh_transformer.checkpoint import read_ckpt, write_ckpt, write_ckpt_v2, load_ckpt_v2
 from mesh_transformer.layers import EmbeddingShard, TransformerLayerShard, RelativePositionEmbs, ProjectionShard, \
     TransformerLayerShardV2, Projection, EmbeddingShardV2
-from mesh_transformer.util import to_f32, to_bf16, maybe_shard, head_print, global_norm
+from mesh_transformer.util import to_f32, to_bf16, maybe_shard, head_print, global_norm, f_psum
 from jax.experimental import PartitionSpec as P
 
 
@@ -167,10 +167,12 @@ class CausalTransformerShard(hk.Module):
         for l in self.transformer_layers:
             x = x + hk.remat(l)(x, attn_bias)
             if not l.do_layer_norm_before:
+                x = f_psum(x)
                 x = hk.remat(l.norm)(x)
             if not l.neox_gpt_j_residual and l.compat in ("neo", "fairseq_lm", "neox", "opt"):
                 x = x + hk.remat(l.neo_ff)(x)
                 if not l.do_layer_norm_before:
+                    x = f_psum(x)
                     x = hk.remat(l.norm_2)(x)
 
         return hk.remat(self.proj.loss)(x, target, z_loss)
@@ -206,10 +208,12 @@ class CausalTransformerShard(hk.Module):
             res, layer_state = l.get_init_decode_state(x, length - 1, attn_bias)
             x = x + res
             if not l.do_layer_norm_before:
+                x = f_psum(x)
                 x = l.norm(x)
             if not l.neox_gpt_j_residual and l.compat in ("neo", "fairseq_lm", "neox", "opt"):
                 x = x + l.neo_ff(x)
                 if not l.do_layer_norm_before:
+                    x = f_psum(x)
                     x = l.norm_2(x)
             states.append(layer_state)
 
@@ -232,10 +236,12 @@ class CausalTransformerShard(hk.Module):
             res, layer_state = l.decode_once(s, x, attn_bias)
             x = x + res
             if not l.do_layer_norm_before:
+                x = f_psum(x)
                 x = l.norm(x)
             if not l.neox_gpt_j_residual and l.compat in ("neo", "fairseq_lm", "neox", "opt"):
                 x = x + l.neo_ff(x)
                 if not l.do_layer_norm_before:
+                    x = f_psum(x)
                     x = l.norm_2(x)
             new_states.append(layer_state)
 

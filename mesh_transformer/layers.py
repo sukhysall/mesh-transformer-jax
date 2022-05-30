@@ -856,8 +856,8 @@ class ProjectionShard(hk.Module):
         return hk.Flatten()(jnp.transpose(all_proj, (1, 0, 2)))[:, :self.out_dim_unpadded]
 
     def loss(self, x, targets, z_loss=1):
-        x = f_psum(x)
         if self.compat != "opt":
+            x = f_psum(x)
             x = self.norm(x)
         logits = self.proj(x, transpose_weights=self.compat in ("neo", "fairseq_lm", "opt"))
 

@@ -348,7 +348,7 @@ class EmbeddingShard(hk.Module):
         self.proj = TransposingLinear(self.in_dim_per_shard, self.d_embed, w_init=hk.initializers.TruncatedNormal(stddev=1 / np.sqrt(in_dim)), with_bias=self.compat not in ("neo", "fairseq_lm", "neox", "opt"))
 
         if self.d_embed != self.out_dim:
-            self.project_in = jax.lax.all_gather(hk.get_parameter("project_in", [self.d_embed, self.out_dim_per_shard], init=hk.initializers.TruncatedNormal(stddev=1 / np.sqrt(self.d_embed))), "shard", axis=-1, tiled=True)
+            self.project_in = jnp.concatenate(jax.lax.all_gather(hk.get_parameter("project_in", [self.d_embed, self.out_dim_per_shard], init=hk.initializers.TruncatedNormal(stddev=1 / np.sqrt(self.d_embed))), "shard"), axis=-1)
         else:
             self.project_in = None
 
@@ -852,7 +852,7 @@ class ProjectionShard(hk.Module):
             self.proj = TransposingLinear(config["d_model"], self.dim_per_shard, with_bias=self.compat not in ("neo", "fairseq_lm", "neox", "opt"))
 
         if self.d_embed != self.in_dim:
-            self.project_out = jax.lax.all_gather(hk.get_parameter("project_out", [self.in_dim, self.d_embed // shards], init=hk.initializers.TruncatedNormal(stddev=1 / np.sqrt(self.in_dim))), "shard", axis=-1, tiled=True)
+            self.project_out = jnp.concatenate(jax.lax.all_gather(hk.get_parameter("project_out", [self.in_dim, self.d_embed // shards], init=hk.initializers.TruncatedNormal(stddev=1 / np.sqrt(self.in_dim))), "shard"), axis=-1)
         else:
             self.project_out = None
 

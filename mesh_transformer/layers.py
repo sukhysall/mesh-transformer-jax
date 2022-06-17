@@ -859,6 +859,8 @@ class ProjectionShard(hk.Module):
         if self.compat != "opt":
             x = f_psum(x)
             x = self.norm(x)
+        if self.project_out is not None:
+            x @= self.project_out
         logits = self.proj(x, transpose_weights=self.compat in ("neo", "fairseq_lm", "opt"))
 
         shard_start_index = jax.lax.axis_index('shard') * self.dim_per_shard

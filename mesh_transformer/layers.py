@@ -831,7 +831,8 @@ class ProjectionShard(hk.Module):
         out_dim = self.out_dim_unpadded + config.get("n_vocab_padding", 0)
         shards = config["cores_per_replica"]
         self.compat = config.get("compat", "j")
-        if self.compat != "opt":
+        self.do_layer_norm_before = config.get("do_layer_norm_before", True)
+        if self.do_layer_norm_before or self.compat != "opt":
             norm = getnorm(config["norm"])
 
         assert out_dim % shards == 0
@@ -840,7 +841,7 @@ class ProjectionShard(hk.Module):
         self.dim = out_dim
         self.dim_per_shard = out_dim // shards
 
-        if self.compat != "opt":
+        if self.do_layer_norm_before or self.compat != "opt":
             self.norm = norm
 
         self.d_embed = config.get("d_embed", self.in_dim)
@@ -857,7 +858,7 @@ class ProjectionShard(hk.Module):
             self.project_out = None
 
     def __call__(self, x):
-        if self.compat != "opt":
+        if self.do_layer_norm_before or self.compat != "opt":
             x = self.norm(x)
         if self.project_out is not None:
             x @= self.project_out
@@ -868,7 +869,7 @@ class ProjectionShard(hk.Module):
         return hk.Flatten()(jnp.transpose(all_proj, (1, 0, 2)))[:, :self.out_dim_unpadded]
 
     def loss(self, x, targets, z_loss=1):
-        if self.compat != "opt":
+        if self.do_layer_norm_before or self.compat != "opt":
             x = f_psum(x)
             x = self.norm(x)
         if self.project_out is not None:

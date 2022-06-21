@@ -829,7 +829,7 @@ class ProjectionShard(hk.Module):
         self.dim = out_dim
         self.dim_per_shard = out_dim // shards
 
-        if self.compat != "opt":
+        if self.do_layer_norm_before or self.compat != "opt":
             self.norm = norm
 
         self.d_embed = config.get("d_embed", self.in_dim)

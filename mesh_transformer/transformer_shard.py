@@ -43,6 +43,7 @@ def compute_placeholder_params(config: dict):
     compat = config.get("compat", "j")
     pe = config["pe"]
     use_combined_qkv = config.get("combined_qkv", compat == "neox")
+    do_layer_norm_before = config.get("do_layer_norm_before", True)
 
     if compat not in ("j", "neo", "fairseq_lm", "neox", "opt"):
         raise NotImplementedError(f"Unsupported model type {repr(compat)}")
@@ -114,7 +115,7 @@ def compute_placeholder_params(config: dict):
             w=PlaceholderTensor(shards, d_embed, in_dim_per_shard),
             b=PlaceholderTensor(shards, in_dim_per_shard) if compat == "j" else None,
         )
-    if compat != "opt":
+    if do_layer_norm_before or compat != "opt":
         params["causal_transformer_shard/~/projection_shard/~/replicated_layer_norm"] = _create_dict(  # norm
             offset=PlaceholderTensor(shards, out_dim),
             scale=PlaceholderTensor(shards, out_dim),

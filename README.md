@@ -17,20 +17,21 @@ Inherited from **modelcompat**:
     * `"pe": "sinusoidal"`: The original sinusoidal positional embedding described in the original paper on transformer models, "Attention Is All You Need" (https://arxiv.org/pdf/1706.03762.pdf), in section 3.5 Positional Encoding.
     * `"pe": "fairseq_sinusoidal"`: A variant of sinusoidal positional embedding currently used by fairseq. Most fairseq causal language models use this type of positional embedding.
     * `"pe": "neox_rotary"`: A variant of rotary positional embedding used by GPT-NeoX. When using this, you can still specify `pe_rotary_dims` like with the `rotary` PE type.
+    * `"pe": "alibi"`: Attention with Linear Biases (ALiBi), described in https://arxiv.org/pdf/2108.12409.pdf. The implementation of ALiBi in this repository matches the one used in the BLOOM model.
 * __(/mesh_transformer/layers.py and /mesh_transformer/transformer_shard.py)__ Changed the implementation of the loss function in ProjectionShard so that loss is only computed for tokens with token ID less than `n_vocab`.
 * __(/convert_neo_pytorch_model_to_jax.ipynb)__ Created this notebook, which converts GPT-Neo models from pytorch_model.bin format to a format usable by this branch.
 * __(/mesh_transformer/layers.py and /mesh_transformer/transformer_shard.py)__ Added some optional GPT-Neo/fairseq/GPT-NeoX/OPT compatibility config options to the v1 transformer:
-    * `compat`: A string that can be set to `"j"`, `"neo"`, `"fairseq"`, `"neox"` or `"opt"`. Setting this to `"neo"`, `"fairseq"` or `"neox"` or `"opt"` changes the architecture of the transformer network slightly to better conform to that of the GPT-Neo/fairseq/GPT-NeoX/OPT models. Defaults to `"j"`.
+    * `compat`: A string that can be set to `"j"`, `"neo"`, `"fairseq"`, `"neox"`, `"opt"` or `"bloom"`. Setting this to something other than `"j"` changes the architecture of the transformer network slightly to better conform to that of the corresponding model. Defaults to `"j"`.
     * `attention_layers`: A list with `layers` strings inside of it, each of which is either `"global"` or `"local"`, specifying whether each layer should use global or local attention. If `compat` is set to `"neo"`, this defaults to a list with alternating `"global"` and `"local"`, otherwise defaults to all `"global"`.
     * `local_attention_window`: A positive integer that specifies the window size for layers with local attention. Has no effect if all of your layers are global attention layers. Defaults to 256.
     * `n_vocab_padding`: A nonnegative integer, the amount of padding your input and output embeddings have. Defaults to 0.
     * `pe_shift`: A nonnegative integer -- what the first position ID should be when doing positional embedding. If `compat` is set to `"fairseq"`, this defaults to 2, otherwise 0.
     * `activation`: A string describing which activation function to use. Possible options are listed in https://github.com/huggingface/transformers/blob/main/src/transformers/activations.py. The default activation function depends on what `compat` is set to:
         * `"fairseq_lm"`: `"gelu"`
-        * `"neox"`: `"gelu_fast"`
+        * `"neox"` or `"bloom"`: `"gelu_fast"`
         * `"opt"`: `"relu"`
         * All other values: `"gelu_new"`
-    * `combined_qkv`: A Boolean value. If set to `True`, uses GPT-NeoX-style strided QKV linear transformation with weight shape `(d_model, d_model * 3)` and bias shape `(d_model * 3,)` instead of three separate linear transformations each with weight shape `(d_model, d_model)` and bias shape `(d_model,)`. Defaults to `True` if compat is `"neox"`, otherwise `False`.
+    * `combined_qkv`: A Boolean value. If set to `True`, uses GPT-NeoX-style strided QKV linear transformation with weight shape `(d_model, d_model * 3)` and bias shape `(d_model * 3,)` instead of three separate linear transformations each with weight shape `(d_model, d_model)` and bias shape `(d_model,)`. Defaults to `True` if compat is `"neox"` or `"bloom"`, otherwise `False`.
         * The first group of `d_model // n_heads` columns of the query weight and the first group of `d_model // n_heads` elements of the query bias correspond to the first group of `d_model // n_heads` columns of the strided QKV weight and the first group of `d_model // n_heads` elements of the strided QKV bias.
         * The first group of `d_model // n_heads` columns of the key weight and the first group of `d_model // n_heads` elements of the key bias correspond to the second group of `d_model // n_heads` columns of the strided QKV weight and the second group of `d_model // n_heads` elements of the strided QKV bias.
         * The first group of `d_model // n_heads` columns of the value weight and the first group of `d_model // n_heads` elements of the value bias correspond to the third group of `d_model // n_heads` columns of the strided QKV weight and the third group of `d_model // n_heads` elements of the strided QKV bias.

@@ -420,13 +420,12 @@ class EmbeddingShardV2(hk.Module):
 
 # We actually combine the FF and dense in one layer (i.e. compute in parallel) to minimize all reduces
 class TransformerLayerShard(hk.Module):
-    def __init__(self, config, name=None, init_scale=1., attention_type="global", layer_number=0):
+    def __init__(self, config, name=None, init_scale=1., attention_type="global"):
         super().__init__(name=name)
         heads = config["n_heads"]
         dim = config["d_model"]
         shards = config["cores_per_replica"]
         norm = getnorm(config["norm"])
-        self.layer_number = layer_number
         self.is_rotary = config["pe"] in ("rotary", "neox_rotary")
         self.is_neox_rotary = config["pe"] == "neox_rotary"
         self.attention_type = attention_type

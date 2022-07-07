@@ -154,7 +154,7 @@ class CausalTransformerShard(hk.Module):
 
         attention_layers = config.get("attention_layers", ["global" if self.compat != "neo" or i % 2 == 0 else "local" for i in range(config["layers"])])
         for i in range(layer_count):
-            self.transformer_layers.append(TransformerLayerShard(config, name=f"layer_{i}", init_scale=init_scale, attention_type=attention_layers[i], layer_number=i))
+            self.transformer_layers.append(TransformerLayerShard(config, name=f"layer_{i}", init_scale=init_scale, attention_type=attention_layers[i]))
 
         self.proj = ProjectionShard(config, embedding_shard=self.embed)
 

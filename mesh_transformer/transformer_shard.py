@@ -14,7 +14,8 @@ from jax.experimental.pjit import pjit
 
 from mesh_transformer.checkpoint import read_ckpt, write_ckpt, write_ckpt_v2, load_ckpt_v2
 from mesh_transformer.layers import EmbeddingShard, TransformerLayerShard, RelativePositionEmbs, ProjectionShard, \
-    TransformerLayerShardV2, Projection, EmbeddingShardV2
+    TransformerLayerShardV2, Projection, EmbeddingShardV2, \
+    create_alibi_tensor
 from mesh_transformer.util import to_f32, to_bf16, maybe_shard, head_print, global_norm, f_psum
 from jax.experimental import PartitionSpec as P
 
@@ -42,12 +43,12 @@ def _create_dict(**kwargs):
 def compute_placeholder_params(config: dict):
     compat = config.get("compat", "j")
     pe = config["pe"]
-    use_combined_qkv = config.get("combined_qkv", compat == "neox")
+    use_combined_qkv = config.get("combined_qkv", compat in ("neox", "bloom"))
     do_layer_norm_before = config.get("do_layer_norm_before", True)
 
-    if compat not in ("j", "neo", "fairseq_lm", "neox", "opt"):
+    if compat not in ("j", "neo", "fairseq_lm", "neox", "opt", "bloom"):
         raise NotImplementedError(f"Unsupported model type {repr(compat)}")
-    if pe not in ("rotary", "neox_rotary", "fixed", "sinusoidal", "fairseq_sinusoidal"):
+    if pe not in ("rotary", "neox_rotary", "fixed", "sinusoidal", "fairseq_sinusoidal", "alibi"):
         raise NotImplementedError(f"Unsupported positional embedding type {repr(pe)}")
 
     params: Dict[str, Dict[str, PlaceholderTensor]] = {}
@@ -71,22 +72,28 @@ def compute_placeholder_params(config: dict):
         b=PlaceholderTensor(shards, d_embed) if compat == "j" else None,
     )
 
+    if compat == "bloom":
+        params["causal_transformer_shard/~/embedding_shard/~/replicated_layer_norm"] = _create_dict(  # norm
+            offset=PlaceholderTensor(shards, out_dim),
+            scale=PlaceholderTensor(shards, out_dim),
+        )
+
     for layer in range(config["layers"]):
         header = f"causal_transformer_shard/~/layer_{layer}/~/"
         if use_combined_qkv:
             params[header + "combined_qkv"] = _create_dict(  # qkv
                 w=PlaceholderTensor(shards, out_dim, out_dim_per_shard * 3),
-                b=PlaceholderTensor(shards, out_dim_per_shard * 3) if compat in ("fairseq_lm", "neox", "opt") else None,
+                b=PlaceholderTensor(shards, out_dim_per_shard * 3) if compat in ("fairseq_lm", "neox", "opt", "bloom") else None,
             )
         else:
             for footer in ("linear", "linear_1", "linear_2"):  # q, v, k
                 params[header + footer] = _create_dict(
                     w=PlaceholderTensor(shards, out_dim, out_dim_per_shard),
-                    b=PlaceholderTensor(shards, out_dim_per_shard) if compat in ("fairseq_lm", "neox", "opt") else None,
+                    b=PlaceholderTensor(shards, out_dim_per_shard) if compat in ("fairseq_lm", "neox", "opt", "bloom") else None,
                 )
         params[header + "linear_3"] = _create_dict(  # o
             w=PlaceholderTensor(shards, out_dim_per_shard, out_dim),
-            b=PlaceholderTensor(shards, out_dim) if compat in ("neo", "fairseq_lm", "neox", "opt") else None,
+            b=PlaceholderTensor(shards, out_dim) if compat in ("neo", "fairseq_lm", "neox", "opt", "bloom") else None,
         )
         params[header + "linear_4"] = _create_dict(  # dense_proj
             w=PlaceholderTensor(shards, out_dim, ffn_dim_per_shard),
@@ -100,7 +107,7 @@ def compute_placeholder_params(config: dict):
             offset=PlaceholderTensor(shards, out_dim),
             scale=PlaceholderTensor(shards, out_dim),
         )
-        if compat in ("neo", "fairseq_lm", "neox", "opt"):
+        if compat != "j":
             params[header + "replicated_layer_norm_1"] = _create_dict(  # norm_2
                 offset=PlaceholderTensor(shards, out_dim),
                 scale=PlaceholderTensor(shards, out_dim),
@@ -110,7 +117,7 @@ def compute_placeholder_params(config: dict):
         params["causal_transformer_shard/~/projection_shard"] = _create_dict(
             project_out=PlaceholderTensor(shards, out_dim, d_embed // shards)
         )
-    if compat not in ("neo", "fairseq_lm", "opt"):
+    if compat not in ("neo", "fairseq_lm", "opt", "bloom"):
         params["causal_transformer_shard/~/projection_shard/~/linear"] = _create_dict(  # proj
             w=PlaceholderTensor(shards, d_embed, in_dim_per_shard),
             b=PlaceholderTensor(shards, in_dim_per_shard) if compat == "j" else None,
@@ -140,11 +147,14 @@ class CausalTransformerShard(hk.Module):
 
         self.embed = EmbeddingShard(config)
 
+        self.pe = config["pe"]
+        self.seq = config["seq"]
+
         init_scale = 2. / layer_count
 
         attention_layers = config.get("attention_layers", ["global" if self.compat != "neo" or i % 2 == 0 else "local" for i in range(config["layers"])])
         for i in range(layer_count):
-            self.transformer_layers.append(TransformerLayerShard(config, name=f"layer_{i}", init_scale=init_scale, attention_type=attention_layers[i]))
+            self.transformer_layers.append(TransformerLayerShard(config, name=f"layer_{i}", init_scale=init_scale, attention_type=attention_layers[i], layer_number=i))
 
         self.proj = ProjectionShard(config, embedding_shard=self.embed)
 
@@ -170,7 +180,7 @@ class CausalTransformerShard(hk.Module):
             if not l.do_layer_norm_before:
                 x = f_psum(x)
                 x = hk.remat(l.norm)(x)
-            if not l.neox_gpt_j_residual and l.compat in ("neo", "fairseq_lm", "neox", "opt"):
+            if not l.neox_gpt_j_residual and l.compat != "j":
                 x = x + hk.remat(l.neo_ff)(x)
                 if not l.do_layer_norm_before:
                     x = f_psum(x)
@@ -198,6 +208,8 @@ class CausalTransformerShard(hk.Module):
 
         if self.rpe is not None:
             attn_bias = self.rpe(input_len, input_len, self.heads_per_shard, 32)
+        elif self.pe == "alibi":
+            attn_bias = create_alibi_tensor(self.heads, self.heads_per_shard, input_len, input_len, starting_length=length - 1)
         else:
             attn_bias = 0
 
@@ -211,7 +223,7 @@ class CausalTransformerShard(hk.Module):
             if not l.do_layer_norm_before:
                 x = f_psum(x)
                 x = l.norm(x)
-            if not l.neox_gpt_j_residual and l.compat in ("neo", "fairseq_lm", "neox", "opt"):
+            if not l.neox_gpt_j_residual and l.compat != "j":
                 x = x + l.neo_ff(x)
                 if not l.do_layer_norm_before:
                     x = f_psum(x)
@@ -226,6 +238,8 @@ class CausalTransformerShard(hk.Module):
         if self.rpe is not None:
             attn_bias = self.rpe(input_len, input_len, self.heads_per_shard, 32)
             attn_bias = attn_bias[:, -1:, :]
+        elif self.pe == "alibi":
+            attn_bias = create_alibi_tensor(self.heads, self.heads_per_shard, 1, input_len, starting_length=state[0]["tokens_decoded"] + 1)
         else:
             attn_bias = 0
 
@@ -239,7 +253,7 @@ class CausalTransformerShard(hk.Module):
             if not l.do_layer_norm_before:
                 x = f_psum(x)
                 x = l.norm(x)
-            if not l.neox_gpt_j_residual and l.compat in ("neo", "fairseq_lm", "neox", "opt"):
+            if not l.neox_gpt_j_residual and l.compat != "j":
                 x = x + l.neo_ff(x)
                 if not l.do_layer_norm_before:
                     x = f_psum(x)

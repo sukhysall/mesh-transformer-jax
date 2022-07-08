@@ -311,7 +311,7 @@ def apply_rotary_pos_emb_v2(x, sincos):
     return (x * cos) + (rotate_every_two_v2(x) * sin)
 
 
-def create_alibi_tensor(heads: int, heads_per_shard: int, k_length: int, starting_length: int = 1, attention: str = "global"):
+def create_alibi_tensor(heads: int, heads_per_shard: int, k_length: int):
     slopes = (2 ** (-(2 ** -(jnp.log2(heads) - 3)))) ** (1 + heads_per_shard*jax.lax.axis_index("shard") + jnp.arange(heads_per_shard))  # shape: (heads_per_shard,)
     scales = jnp.arange(k_length)  # shape: (k_length,)
     tensor = jnp.outer(slopes, scales)  # shape: (heads_per_shard, k_length)
@@ -459,8 +459,6 @@ class TransformerLayerShard(hk.Module):
         if config["pe"] == "alibi":
             # For the sake of simplicity, if ALiBi is enabled, we require the number of attention heads to be a power of two
             assert (heads & (heads - 1)) == 0
-            # For the sake of simplicity, if ALiBi is enabled, local attention is not implemented
-            assert attention_type == "global"
 
         self.dim = dim
         self.dim_per_head = dim // heads

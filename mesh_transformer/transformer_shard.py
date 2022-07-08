@@ -168,6 +168,8 @@ class CausalTransformerShard(hk.Module):
 
         if self.rpe is not None:
             attn_bias = self.rpe(input_len, input_len, self.heads_per_shard, 32)
+        elif self.pe == "alibi":
+            attn_bias = create_alibi_tensor(self.heads, self.heads_per_shard, input_len)
         else:
             attn_bias = 0
 

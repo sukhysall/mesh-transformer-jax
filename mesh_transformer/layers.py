@@ -311,10 +311,12 @@ def apply_rotary_pos_emb_v2(x, sincos):
     return (x * cos) + (rotate_every_two_v2(x) * sin)
 
 
-def create_alibi_tensor(heads: int, heads_per_shard: int, q_length: int, k_length: int, starting_length: int = 0, attention: str = "global"):
+def create_alibi_tensor(heads: int, heads_per_shard: int, k_length: int, starting_length: int = 1, attention: str = "global"):
     slopes = (2 ** (-(2 ** -(jnp.log2(heads) - 3)))) ** (1 + heads_per_shard*jax.lax.axis_index("shard") + jnp.arange(heads_per_shard))  # shape: (heads_per_shard,)
-    scales = jnp.maximum(0, jnp.tile(jnp.arange(k_length), (q_length, 1)) - jnp.maximum(0, k_length - 1 - starting_length - jnp.arange(q_length)[:, jnp.newaxis]))  # shape: (q_length, k_length)
-    return jnp.einsum("h,tT->htT", slopes, scales)  # shape: (heads_per_shard, q_length, k_length)
+    scales = jnp.arange(k_length)  # shape: (k_length,)
+    tensor = jnp.outer(slopes, scales)  # shape: (heads_per_shard, k_length)
+    tensor = tensor[:, np.newaxis, :]  # shape: (heads_per_shard, 1, k_length)
+    return tensor
 
 
 class EmbeddingShard(hk.Module):

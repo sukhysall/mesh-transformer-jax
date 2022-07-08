@@ -311,7 +311,7 @@ def apply_rotary_pos_emb_v2(x, sincos):
     return (x * cos) + (rotate_every_two_v2(x) * sin)
 
 
-def create_alibi_tensor(heads: int, heads_per_shard: int, k_length: int, starting_length: int = 1, attention: str = "global"):
+def create_alibi_tensor(heads: int, heads_per_shard: int, k_length: int):
     slopes = (2 ** (-(2 ** -(jnp.log2(heads) - 3)))) ** (1 + heads_per_shard*jax.lax.axis_index("shard") + jnp.arange(heads_per_shard))  # shape: (heads_per_shard,)
     scales = jnp.arange(k_length)  # shape: (k_length,)
     tensor = jnp.outer(slopes, scales)  # shape: (heads_per_shard, k_length)

@@ -447,8 +447,6 @@ class TransformerLayerShard(hk.Module):
         if config["pe"] == "alibi":
             # For the sake of simplicity, if ALiBi is enabled, we require the number of attention heads to be a power of two
             assert (heads & (heads - 1)) == 0
-            # For the sake of simplicity, if ALiBi is enabled, local attention is not implemented
-            assert attention_type == "global"
 
         self.dim = dim
         self.dim_per_head = dim // heads

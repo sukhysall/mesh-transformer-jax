@@ -48,7 +48,7 @@ def compute_placeholder_params(config: dict):
 
     if compat not in ("j", "neo", "fairseq_lm", "neox", "opt", "bloom"):
         raise NotImplementedError(f"Unsupported model type {repr(compat)}")
-    if pe not in ("rotary", "neox_rotary", "fixed", "sinusoidal", "fairseq_sinusoidal", "alibi"):
+    if pe not in ("rotary", "neox_rotary", "fixed", "sinusoidal", "fairseq_sinusoidal", "alibi", "t5"):
         raise NotImplementedError(f"Unsupported positional embedding type {repr(pe)}")
 
     params: Dict[str, Dict[str, PlaceholderTensor]] = {}

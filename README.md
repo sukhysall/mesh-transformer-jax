@@ -11,7 +11,7 @@ Inherited from **lowmem**:
 
 Inherited from **main**:
 
-* __(/mesh_transformer/util.py)__ Optax is no longer required for model inference (you still need it to train models).
+* __(/mesh_transformer/transformer_shard.py, /mesh_transformer/util.py)__ Optax is no longer required for model inference (you still need it to train models).
 * __(/.gitattributes, /setup.cfg, /setup.py, /versioneer.py, /mesh_transformer/\_\_init.py\_\_, /mesh_transformer/\_version.py)__ python-versioneer is now used to automatically generate the version string.
 * __(/requirements.txt)__ A new requirement for `chex >= 0.0.7, < 0.1.3` has been added.
 * __(/mesh_transformer/checkpoint.py)__ If `smart_open` is not found, we will use Python's builtin `open` instead.

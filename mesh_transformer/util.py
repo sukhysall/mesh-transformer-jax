@@ -1,7 +1,11 @@
 import jax
 import jax.numpy as jnp
 from jax.experimental.pjit import with_sharding_constraint
-from optax import AdditiveWeightDecayState, GradientTransformation, EmptyState
+try:
+    from optax import AdditiveWeightDecayState, GradientTransformation, EmptyState
+    HAS_OPTAX = True
+except ImportError:
+    HAS_OPTAX = False
 
 
 # same as with_sharding_constraint but doesn't fail if run outside of pjit/mesh context
@@ -33,55 +37,56 @@ def global_norm(updates, use_psum=True):
     return jnp.sqrt(pre_sqrt)
 
 
-class ClipByGlobalNormState(EmptyState):
-    """The `clip_by_global_norm` transformation is stateless."""
+if HAS_OPTAX:
+    class ClipByGlobalNormState(EmptyState):
+        """The `clip_by_global_norm` transformation is stateless."""
 
 
-def clip_by_global_norm(max_norm, use_psum=True) -> GradientTransformation:
-    """Clip updates using their global norm.
+    def clip_by_global_norm(max_norm, use_psum=True) -> GradientTransformation:
+        """Clip updates using their global norm.
 
-    References:
-      [Pascanu et al, 2012](https://arxiv.org/abs/1211.5063)
+        References:
+        [Pascanu et al, 2012](https://arxiv.org/abs/1211.5063)
 
-    Args:
-      max_norm: the maximum global norm for an update.
+        Args:
+        max_norm: the maximum global norm for an update.
 
-    Returns:
-      An (init_fn, update_fn) tuple.
-    """
+        Returns:
+        An (init_fn, update_fn) tuple.
+        """
 
-    def init_fn(_):
-        return ClipByGlobalNormState()
+        def init_fn(_):
+            return ClipByGlobalNormState()
 
-    def update_fn(updates, state, params=None):
-        del params
-        g_norm = global_norm(updates, use_psum=use_psum)
-        trigger = g_norm < max_norm
-        updates = jax.tree_map(
-            lambda t: jnp.where(trigger, t, (t / g_norm) * max_norm), updates)
-        return updates, state
+        def update_fn(updates, state, params=None):
+            del params
+            g_norm = global_norm(updates, use_psum=use_psum)
+            trigger = g_norm < max_norm
+            updates = jax.tree_map(
+                lambda t: jnp.where(trigger, t, (t / g_norm) * max_norm), updates)
+            return updates, state
 
-    return GradientTransformation(init_fn, update_fn)
+        return GradientTransformation(init_fn, update_fn)
 
 
-def additive_weight_decay(weight_decay: float = 0.0) -> GradientTransformation:
-    """Add parameter scaled by `weight_decay`, to all parameters with more than one dim (i.e. exclude ln, bias etc)
+    def additive_weight_decay(weight_decay: float = 0.0) -> GradientTransformation:
+        """Add parameter scaled by `weight_decay`, to all parameters with more than one dim (i.e. exclude ln, bias etc)
 
-    Args:
-      weight_decay: a scalar weight decay rate.
+        Args:
+        weight_decay: a scalar weight decay rate.
 
-    Returns:
-      An (init_fn, update_fn) tuple.
-    """
+        Returns:
+        An (init_fn, update_fn) tuple.
+        """
 
-    def init_fn(_):
-        return AdditiveWeightDecayState()
+        def init_fn(_):
+            return AdditiveWeightDecayState()
 
-    def update_fn(updates, state, params):
-        updates = jax.tree_multimap(lambda g, p: g + weight_decay * p * (len(g.shape) > 1), updates, params)
-        return updates, state
+        def update_fn(updates, state, params):
+            updates = jax.tree_multimap(lambda g, p: g + weight_decay * p * (len(g.shape) > 1), updates, params)
+            return updates, state
 
-    return GradientTransformation(init_fn, update_fn)
+        return GradientTransformation(init_fn, update_fn)
 
 
 def to_f32(t):

@@ -8,7 +8,11 @@ import haiku as hk
 import jax
 import jax.numpy as jnp
 import numpy as np
-import optax
+try:
+    import optax
+    HAS_OPTAX = True
+except ImportError:
+    HAS_OPTAX = False
 from jax.experimental.maps import thread_resources
 from jax.experimental.pjit import pjit
 
@@ -317,7 +321,7 @@ class CausalTransformer:
             updates, new_opt_state = optimizer.update(grad, state["opt_state"], state["params"])
 
             return to_f32(loss), to_f32(last_loss), to_f32(grad_norm), to_f32(grad_norm_micro), {
-                "params": optax.apply_updates(state["params"], to_f32(updates)),
+                "params": optax.apply_updates(state["params"], to_f32(updates)) if HAS_OPTAX else None,
                 "step": state["step"] + 1,
                 "opt_state": new_opt_state
             }
@@ -692,7 +696,7 @@ class CausalTransformerV2:
             updates, new_opt_state = optimizer.update(grad, state["opt_state"], state["params"])
 
             return to_f32(loss), to_f32(last_loss), {
-                "params": optax.apply_updates(state["params"], to_f32(updates)),
+                "params": optax.apply_updates(state["params"], to_f32(updates)) if HAS_OPTAX else None,
                 "step": state["step"] + 1,
                 "opt_state": new_opt_state,
             }

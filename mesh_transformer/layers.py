@@ -184,8 +184,46 @@ class RelativePositionEmbs(hk.Module):
         return values
 
 
+class Linear(hk.Module):
+    def __init__(self, output_size, with_bias=True, w_init=None, b_init=None, transposed=False, name=None):
+        super().__init__(name=name)
+        self.input_size = None
+        self.output_size = output_size
+        self.with_bias = with_bias
+        self.w_init = w_init
+        self.b_init = b_init or jnp.zeros
+        self.transposed = transposed
+
+    def __call__(self, inputs: jnp.ndarray, *, precision=None) -> jnp.ndarray:
+        if not inputs.shape:
+            raise ValueError("Input must not be scalar.")
+
+        input_size = self.input_size = inputs.shape[-1]
+        output_size = self.output_size
+        dtype = inputs.dtype
+
+        w_init = self.w_init
+        if w_init is None:
+            stddev = 1. / np.sqrt(self.input_size)
+            w_init = hk.initializers.TruncatedNormal(stddev=stddev)
+
+        if self.transposed:
+            w = hk.get_parameter("w", [output_size, input_size], dtype, init=w_init).T
+        else:
+            w = hk.get_parameter("w", [input_size, output_size], dtype, init=w_init)
+
+        out = jnp.dot(inputs, w, precision=precision)
+
+        if self.with_bias:
+            b = hk.get_parameter("b", [self.output_size], dtype, init=self.b_init)
+            b = jnp.broadcast_to(b, out.shape)
+            out = out + b
+
+        return out
+
+
 class TransposingLinear(hk.Module):
-    def __init__(self, input_size, output_size, with_bias=True, w_init=None, b_init=None, name=None):
+    def __init__(self, input_size, output_size, with_bias=True, w_init=None, b_init=None, transposed=False, name=None):
         if name is None:
             name = "linear"
         super().__init__(name=name)
@@ -194,6 +232,7 @@ class TransposingLinear(hk.Module):
         self.with_bias = with_bias
         self.w_init = w_init
         self.b_init = b_init or jnp.zeros
+        self.transposed = transposed
 
     def __call__(self, inputs: jnp.ndarray, *, precision=None, transpose_weights=False) -> jnp.ndarray:
         if not inputs.shape:
@@ -207,7 +246,11 @@ class TransposingLinear(hk.Module):
         if w_init is None:
             stddev = 1. / np.sqrt(self.input_size)
             w_init = hk.initializers.TruncatedNormal(stddev=stddev)
-        w = hk.get_parameter("w", [input_size, output_size], dtype, init=w_init)
+
+        if self.transposed:
+            w = hk.get_parameter("w", [output_size, input_size], dtype, init=w_init).T
+        else:
+            w = hk.get_parameter("w", [input_size, output_size], dtype, init=w_init)
 
         if transpose_weights:
             w = w.T
@@ -222,7 +265,7 @@ class TransposingLinear(hk.Module):
 
 
 class AllReduceLinear(hk.Module):
-    def __init__(self, output_size, with_bias=True, w_init=None, b_init=None, name=None, all_reduce=False, shards=None):
+    def __init__(self, output_size, with_bias=True, w_init=None, b_init=None, transposed=False, name=None, all_reduce=False, shards=None):
         if all_reduce and shards is None:
             raise ValueError("Shards must be specified if `all_reduce` is true")
         if name is None:
@@ -235,6 +278,7 @@ class AllReduceLinear(hk.Module):
         self.b_init = b_init or jnp.zeros
         self.all_reduce = all_reduce
         self.shards = shards
+        self.transposed = transposed
 
     def __call__(self, inputs: jnp.ndarray, *, precision=None) -> jnp.ndarray:
         if not inputs.shape:
@@ -248,7 +292,11 @@ class AllReduceLinear(hk.Module):
         if w_init is None:
             stddev = 1. / np.sqrt(self.input_size)
             w_init = hk.initializers.TruncatedNormal(stddev=stddev)
-        w = hk.get_parameter("w", [input_size, output_size], dtype, init=w_init)
+
+        if self.transposed:
+            w = hk.get_parameter("w", [output_size, input_size], dtype, init=w_init).T
+        else:
+            w = hk.get_parameter("w", [input_size, output_size], dtype, init=w_init)
 
         out = jnp.dot(inputs, w, precision=precision)
 
@@ -339,6 +387,8 @@ class EmbeddingShard(hk.Module):
 
         self.d_embed = config.get("d_embed", self.out_dim)
 
+        self.transposed_linear = config.get("transposed_linear", False)
+
         if config["pe"] == "fixed":
             embed_init = hk.initializers.TruncatedNormal(stddev=0.02)
             self.positional_embeddings = hk.get_parameter('pos_embs', [config["seq"], self.out_dim_per_shard], init=embed_init)
@@ -359,7 +409,11 @@ class EmbeddingShard(hk.Module):
             self.norm = getnorm(config["norm"])
 
         if self.d_embed != self.out_dim:
-            self.project_in = jnp.concatenate(jax.lax.all_gather(hk.get_parameter("project_in", [self.d_embed, self.out_dim_per_shard], init=hk.initializers.TruncatedNormal(stddev=1 / np.sqrt(self.d_embed))), "shard"), axis=-1)
+            if self.transposed_linear:
+                p = hk.get_parameter("project_in", [self.out_dim_per_shard, self.d_embed], init=hk.initializers.TruncatedNormal(stddev=1 / np.sqrt(self.d_embed))).T
+            else:
+                p = hk.get_parameter("project_in", [self.d_embed, self.out_dim_per_shard], init=hk.initializers.TruncatedNormal(stddev=1 / np.sqrt(self.d_embed)))
+            self.project_in = jnp.concatenate(jax.lax.all_gather(p, "shard"), axis=-1)
         else:
             self.project_in = None
 
@@ -451,6 +505,7 @@ class TransformerLayerShard(hk.Module):
         self.use_combined_qkv = config.get("combined_qkv", self.compat in ("neox", "bloom"))
         self.early_all_reduce = self.compat == "neox" and not self.neox_gpt_j_residual
         self.do_layer_norm_before = config.get("do_layer_norm_before", True)
+        self.transposed_linear = config.get("transposed_linear", False)
 
         assert dim % heads == 0
         assert heads % shards == 0
@@ -471,20 +526,22 @@ class TransformerLayerShard(hk.Module):
             self.norm_2 = getnorm(config["norm"])
 
         if self.use_combined_qkv:
-            self.qkv = hk.Linear(self.dim_per_shard * 3, with_bias=self.compat in ("fairseq_lm", "neox", "opt", "bloom"), name="combined_qkv")
+            self.qkv = Linear(self.dim_per_shard * 3, with_bias=self.compat in ("fairseq_lm", "neox", "opt", "bloom"), transposed=self.transposed_linear, name="combined_qkv")
         else:
-            self.q = hk.Linear(self.dim_per_shard, with_bias=self.compat in ("fairseq_lm", "neox", "opt", "bloom"), name="linear")
-            self.v = hk.Linear(self.dim_per_shard, with_bias=self.compat in ("fairseq_lm", "neox", "opt", "bloom"), name="linear_1")
-            self.k = hk.Linear(self.dim_per_shard, with_bias=self.compat in ("fairseq_lm", "neox", "opt", "bloom"), name="linear_2")
+            self.q = Linear(self.dim_per_shard, with_bias=self.compat in ("fairseq_lm", "neox", "opt", "bloom"), transposed=self.transposed_linear, name="linear")
+            self.v = Linear(self.dim_per_shard, with_bias=self.compat in ("fairseq_lm", "neox", "opt", "bloom"), transposed=self.transposed_linear, name="linear_1")
+            self.k = Linear(self.dim_per_shard, with_bias=self.compat in ("fairseq_lm", "neox", "opt", "bloom"), transposed=self.transposed_linear, name="linear_2")
 
         self.o = AllReduceLinear(self.dim, with_bias=self.compat in ("neo", "fairseq_lm", "neox", "opt", "bloom"),
                                  w_init=hk.initializers.TruncatedNormal(stddev=init_scale / np.sqrt(self.dim)),
+                                 transposed=self.transposed_linear,
                                  name="linear_3",
                                  all_reduce=self.early_all_reduce, shards=shards)
 
-        self.dense_proj = hk.Linear(self.dim_per_shard * 4, name="linear_4")
+        self.dense_proj = Linear(self.dim_per_shard * 4, transposed=self.transposed_linear, name="linear_4")
         self.dense_proj_o = AllReduceLinear(self.dim,
                                             w_init=hk.initializers.TruncatedNormal(stddev=init_scale / np.sqrt(self.dim)),
+                                            transposed=self.transposed_linear,
                                             name="linear_5",
                                             all_reduce=self.early_all_reduce, shards=shards)
 
@@ -866,13 +923,19 @@ class ProjectionShard(hk.Module):
         self.d_embed = config.get("d_embed", self.in_dim)
         assert self.d_embed % shards == 0
 
+        self.transposed_linear = config.get("transposed_linear", False)
+
         if self.compat in ("neo", "fairseq_lm", "opt", "bloom"):
             self.proj = embedding_shard.proj
         else:
-            self.proj = TransposingLinear(config["d_model"], self.dim_per_shard, with_bias=self.compat not in ("neo", "fairseq_lm", "neox", "opt", "bloom"))
+            self.proj = TransposingLinear(config["d_model"], self.dim_per_shard, with_bias=self.compat not in ("neo", "fairseq_lm", "neox", "opt", "bloom"), transposed=self.transposed_linear)
 
         if self.d_embed != self.in_dim:
-            self.project_out = jnp.concatenate(jax.lax.all_gather(hk.get_parameter("project_out", [self.in_dim, self.d_embed // shards], init=hk.initializers.TruncatedNormal(stddev=1 / np.sqrt(self.in_dim))), "shard"), axis=-1)
+            if self.transposed_linear:
+                p = hk.get_parameter("project_out", [self.d_embed // shards, self.in_dim], init=hk.initializers.TruncatedNormal(stddev=1 / np.sqrt(self.in_dim))).T
+            else:
+                p = hk.get_parameter("project_out", [self.in_dim, self.d_embed // shards], init=hk.initializers.TruncatedNormal(stddev=1 / np.sqrt(self.in_dim)))
+            self.project_out = jnp.concatenate(jax.lax.all_gather(p, "shard"), axis=-1)
         else:
             self.project_out = None
 

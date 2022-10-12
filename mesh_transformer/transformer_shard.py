@@ -25,8 +25,11 @@ from jax.experimental import PartitionSpec as P
 
 
 class PlaceholderTensor:
-    def __init__(self, *shape: int):
-        self.shape = shape
+    def __init__(self, *shape: int, transposed=False):
+        if transposed:
+            self.shape = shape[:-2] + (shape[-1], shape[-2])
+        else:
+            self.shape = shape
         self.size = reduce(lambda x, y: x * y, shape, 1)
 
     def __repr__(self):
@@ -49,6 +52,7 @@ def compute_placeholder_params(config: dict):
     pe = config["pe"]
     use_combined_qkv = config.get("combined_qkv", compat in ("neox", "bloom"))
     do_layer_norm_before = config.get("do_layer_norm_before", True)
+    transposed_linear = config.get("transposed_linear", False)
 
     if compat not in ("j", "neo", "fairseq_lm", "neox", "opt", "bloom"):
         raise NotImplementedError(f"Unsupported model type {repr(compat)}")
@@ -68,7 +72,7 @@ def compute_placeholder_params(config: dict):
     if config["pe"] == "fixed" or d_embed != out_dim:
         params["causal_transformer_shard/~/embedding_shard"] = _create_dict(
             pos_embs=PlaceholderTensor(shards, seq, out_dim_per_shard) if config["pe"] == "fixed" else None,  # positional_embeddings
-            project_in=PlaceholderTensor(shards, d_embed, out_dim_per_shard) if d_embed != out_dim else None,
+            project_in=PlaceholderTensor(shards, d_embed, out_dim_per_shard, transposed=transposed_linear) if d_embed != out_dim else None,
         )
 
     params["causal_transformer_shard/~/embedding_shard/~/linear"] = _create_dict(  # proj
@@ -86,25 +90,25 @@ def compute_placeholder_params(config: dict):
         header = f"causal_transformer_shard/~/layer_{layer}/~/"
         if use_combined_qkv:
             params[header + "combined_qkv"] = _create_dict(  # qkv
-                w=PlaceholderTensor(shards, out_dim, out_dim_per_shard * 3),
+                w=PlaceholderTensor(shards, out_dim, out_dim_per_shard * 3, transposed=transposed_linear),
                 b=PlaceholderTensor(shards, out_dim_per_shard * 3) if compat in ("fairseq_lm", "neox", "opt", "bloom") else None,
             )
         else:
             for footer in ("linear", "linear_1", "linear_2"):  # q, v, k
                 params[header + footer] = _create_dict(
-                    w=PlaceholderTensor(shards, out_dim, out_dim_per_shard),
+                    w=PlaceholderTensor(shards, out_dim, out_dim_per_shard, transposed=transposed_linear),
                     b=PlaceholderTensor(shards, out_dim_per_shard) if compat in ("fairseq_lm", "neox", "opt", "bloom") else None,
                 )
         params[header + "linear_3"] = _create_dict(  # o
-            w=PlaceholderTensor(shards, out_dim_per_shard, out_dim),
+            w=PlaceholderTensor(shards, out_dim_per_shard, out_dim, transposed=transposed_linear),
             b=PlaceholderTensor(shards, out_dim) if compat in ("neo", "fairseq_lm", "neox", "opt", "bloom") else None,
         )
         params[header + "linear_4"] = _create_dict(  # dense_proj
-            w=PlaceholderTensor(shards, out_dim, ffn_dim_per_shard),
+            w=PlaceholderTensor(shards, out_dim, ffn_dim_per_shard, transposed=transposed_linear),
             b=PlaceholderTensor(shards, ffn_dim_per_shard),
         )
         params[header + "linear_5"] = _create_dict(  # dense_proj_o
-            w=PlaceholderTensor(shards, ffn_dim_per_shard, out_dim),
+            w=PlaceholderTensor(shards, ffn_dim_per_shard, out_dim, transposed=transposed_linear),
             b=PlaceholderTensor(shards, out_dim),
         )
         params[header + "replicated_layer_norm"] = _create_dict(  # norm
@@ -119,11 +123,11 @@ def compute_placeholder_params(config: dict):
 
     if d_embed != out_dim:
         params["causal_transformer_shard/~/projection_shard"] = _create_dict(
-            project_out=PlaceholderTensor(shards, out_dim, d_embed // shards)
+            project_out=PlaceholderTensor(shards, out_dim, d_embed // shards, transposed=transposed_linear)
         )
     if compat not in ("neo", "fairseq_lm", "opt", "bloom"):
         params["causal_transformer_shard/~/projection_shard/~/linear"] = _create_dict(  # proj
-            w=PlaceholderTensor(shards, d_embed, in_dim_per_shard),
+            w=PlaceholderTensor(shards, d_embed, in_dim_per_shard, transposed=transposed_linear),
             b=PlaceholderTensor(shards, in_dim_per_shard) if compat == "j" else None,
         )
     if do_layer_norm_before or compat != "opt":

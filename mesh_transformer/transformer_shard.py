@@ -209,7 +209,7 @@ class CausalTransformerShard(hk.Module):
             "correct": correct
         }
 
-    def generate_initial(self, context, length, soft_embeddings=None):
+    def generate_initial(self, context, length, soft_embeddings=None, return_logits=True, return_last_hidden_states=False):
         # slice last token off the context (we use that in generate_once to generate the first new token)
         last = context[-1:]
         context = context[:-1]
@@ -240,9 +240,11 @@ class CausalTransformerShard(hk.Module):
                     x = l.norm_2(x)
             states.append(layer_state)
 
-        return self.proj(x), (last.astype(jnp.uint32), states, hk.next_rng_key())
+        if return_last_hidden_states:
+            return self.proj(x) if return_logits else None, (last.astype(jnp.uint32), states, hk.next_rng_key()), {"last_hidden_states": x}
+        return self.proj(x) if return_logits else None, (last.astype(jnp.uint32), states, hk.next_rng_key())
 
-    def generate_once(self, new_tok, state, soft_embeddings=None):
+    def generate_once(self, new_tok, state, soft_embeddings=None, return_logits=True, return_last_hidden_states=False):
         input_len = state[0]["v"].shape[0]
 
         if self.rpe is not None:
@@ -270,7 +272,9 @@ class CausalTransformerShard(hk.Module):
                     x = l.norm_2(x)
             new_states.append(layer_state)
 
-        return self.proj(x), new_states
+        if return_last_hidden_states:
+            return self.proj(x) if return_logits else None, new_states, {"last_hidden_states": x}
+        return self.proj(x) if return_logits else None, new_states
 
 
 class CausalTransformer:

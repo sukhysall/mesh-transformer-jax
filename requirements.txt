@@ -1,8 +1,8 @@
 numpy
 tqdm
 requests
-optax==0.0.9
-dm-haiku==0.0.5
+optax==0.1.5
+dm-haiku==0.0.9
 chex==0.1.7
 jax==0.4.10
 transformers

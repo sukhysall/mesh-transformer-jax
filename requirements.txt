@@ -3,7 +3,7 @@ tqdm
 requests
 optax==0.0.9
 dm-haiku==0.0.5
-chex>=0.0.7,<0.1.7
+chex==0.1.7
 jax==0.4.10
 transformers
 progressbar2
